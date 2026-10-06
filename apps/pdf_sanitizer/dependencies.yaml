@@ -1,0 +1,23 @@
+# apps/pdf_sanitizer/dependencies.yaml
+dependencies:
+  - name: pdftoppm
+    binary: pdftoppm
+    description: "PDF to PNG converter (Poppler)"
+    optional: false
+    install_commands:
+      apt: "sudo apt install -y poppler-utils"
+      dnf: "sudo dnf install -y poppler"
+      pacman: "sudo pacman -S poppler"
+      brew: "brew install poppler"
+    version_flag: "-h"
+
+  - name: imagemagick
+    binary: convert
+    description: "Image converter"
+    optional: false
+    install_commands:
+      apt: "sudo apt install -y imagemagick"
+      dnf: "sudo dnf install -y ImageMagick"
+      pacman: "sudo pacman -S imagemagick"
+      brew: "brew install imagemagick"
+    version_flag: "-version"

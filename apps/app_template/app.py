@@ -163,6 +163,7 @@ class AppGeneratorApp(Gtk.Window):
             "Generated structure:\n"
             "<tt>apps/app_name/</tt>\n"
             "├── config.yaml ✓ (filled)\n"
+            "├── dependencies.yaml ⚪ (placeholder)\n"
             "├── __init__.py ⚪ (placeholder)\n"
             "├── logic.py ⚪ (placeholder)\n"
             "├── app.py ⚪ (placeholder)\n"

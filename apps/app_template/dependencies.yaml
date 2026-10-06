@@ -1,0 +1,3 @@
+# apps/app_generator/dependencies.yaml
+# This app requires no external dependencies
+dependencies: []

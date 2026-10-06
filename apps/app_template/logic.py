@@ -276,6 +276,7 @@ def create_app_structure(
     placeholder_files = [
         '__init__.py',
         'logic.py',
+        'dependencies.yaml',
         'app.py',
         'tests/__init__.py',
         f'tests/test_{app_name}.py'

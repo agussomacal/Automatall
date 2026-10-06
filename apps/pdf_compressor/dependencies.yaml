@@ -1,0 +1,27 @@
+# apps/pdf_compressor/dependencies.yaml
+# Required dependencies for PDF Compressor app
+
+dependencies:
+  - name: ghostscript
+    binary: gs
+    description: "PDF processor for compression"
+    optional: false
+    install_commands:
+      apt: "sudo apt install -y ghostscript"
+      dnf: "sudo dnf install -y ghostscript"
+      pacman: "sudo pacman -S --noconfirm ghostscript"
+      brew: "brew install ghostscript"
+    version_flag: "--version"
+
+  - name: imagemagick
+    binary: convert
+    description: "Image converter (for sanitization features)"
+    optional: true
+    install_commands:
+      apt: "sudo apt install -y imagemagick"
+      dnf: "sudo dnf install -y ImageMagick"
+      pacman: "sudo pacman -S imagemagick"
+      brew: "brew install imagemagick"
+    version_flag: "-version"
+
+# Future: Add more apps here
