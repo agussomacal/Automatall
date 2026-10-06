@@ -1,0 +1,10 @@
+# apps/link_creator/config.yaml
+name: "Hello World"
+description: "Writes hello world"
+command: "./hello_world.sh"
+icon: "./icon.png"
+enabled: true
+category: ""
+version: "1.0"
+author: "Your Name"
+tags: []
