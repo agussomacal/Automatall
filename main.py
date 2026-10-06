@@ -1,11 +1,14 @@
 #!/usr/bin/env python3
 """SuperMicroAppManager - A modular app launcher hub with filtering"""
 
+import warnings
+
+warnings.filterwarnings('ignore', category=DeprecationWarning)
+
 import gi
 
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf
-import subprocess
 import yaml
 import os
 import stat
@@ -226,13 +229,26 @@ class SuperMicroAppManager(Gtk.Window):
         cat_hbox.set_column_spacing(5)
         cat_hbox.set_row_spacing(5)
 
-        # Get unique categories
+        # Get unique categories (excluding 'All')
         categories = sorted(set(app.get('category', 'Uncategorized') for app in self.apps))
-        categories = ['All'] + categories
 
-        for category in categories:
-            btn = Gtk.ToggleButton(
-                label=f"{category} ({sum(1 for a in self.apps if a.get('category', 'Uncategorized') == category)})")
+        # Calculate counts BEFORE creating buttons
+        total_apps = len(self.apps)
+        category_counts = {}
+        for cat in categories:
+            category_counts[cat] = sum(1 for a in self.apps if a.get('category', 'Uncategorized') == cat)
+
+        # Build category list with 'All' first
+        categories_with_all = ['All'] + categories
+
+        for category in categories_with_all:
+            # Special handling for 'All' - count ALL apps
+            if category == 'All':
+                count = total_apps
+            else:
+                count = category_counts.get(category, 0)
+
+            btn = Gtk.ToggleButton(label=f"{category} ({count})")
             btn.set_margin_start(5)
             btn.set_margin_end(5)
             btn.connect("toggled", self.on_category_toggled, category)
