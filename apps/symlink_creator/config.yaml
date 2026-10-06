@@ -1,0 +1,11 @@
+# apps/symlink_creator/config.yaml
+name: "Symlink Creator"
+description: "Create symbolic links with drag-and-drop"
+module: "app"
+icon: "./icon.png"
+enabled: true
+category: "files"
+type: "gui"
+version: "1.0"
+author: "Your Name"
+tags: [link, symlink, files, folders]

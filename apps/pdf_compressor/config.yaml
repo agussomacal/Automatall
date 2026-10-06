@@ -1,0 +1,11 @@
+# apps/pdf_compressor/config.yaml
+name: "PDF Compressor"
+description: "Compress PDF files using Ghostscript"
+module: "app"
+icon: "./icon.png"
+enabled: true
+category: "media"
+type: "gui"
+version: "1.0"
+author: "Your Name"
+tags: [pdf, compression]
