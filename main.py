@@ -25,9 +25,10 @@ class AppTile(Gtk.EventBox):
     """Individual app tile"""
 
     def __init__(self, name, description, icon, command, script_dir=None,
-                 app_base_dir=None, index=0, reorder_callback=None):
+                 app_base_dir=None, index=0, app_config=None):
         super().__init__()
         self.name = name
+        self.app_config = app_config or {}  # Store full config
         self.app_base_dir = app_base_dir or script_dir or Path(__file__).parent.resolve()
         self.script_dir = script_dir or Path(__file__).parent.resolve()
         self.index = index
@@ -108,18 +109,37 @@ class AppTile(Gtk.EventBox):
         self.show_all()
 
     def on_clicked(self, widget, event):
-        """Execute command on click"""
+        """Launch app on click"""
         if event.button == 1:
-            print(f"▶️ Executing: {self.command}")
+            print(f"▶️ Launching app: {self.name}")
+
             try:
-                if self.command.endswith('.sh'):
-                    subprocess.Popen(['/bin/bash', self.command])
+                import subprocess
+
+                # Check if it's a GUI app (has 'module') or legacy script (has 'command')
+                if hasattr(self, 'app_config') and self.app_config.get('module'):
+                    # GUI app - launch the Python module
+                    app_dir = getattr(self, 'app_base_dir', None)
+                    module_name = self.app_config.get('module', 'app')
+                    gui_module = app_dir / f"{module_name}.py"
+
+                    if gui_module.exists():
+                        # Launch as separate process so main window stays responsive
+                        subprocess.Popen(['python3', str(gui_module)])
+                    else:
+                        print(f"❌ GUI module not found: {gui_module}")
+                elif self.command:
+                    # Legacy script execution
+                    if self.command.endswith('.sh'):
+                        subprocess.Popen(['/bin/bash', self.command])
+                    else:
+                        subprocess.Popen([self.command])
                 else:
-                    subprocess.Popen([self.command])
-            except PermissionError:
-                print(f"⚠️ Permission denied: {self.command}")
-            except FileNotFoundError:
-                print(f"⚠️ Command not found: {self.command}")
+                    print(f"⚠️ No command or module defined for: {self.name}")
+
+            except Exception as e:
+                print(f"❌ Error launching app: {e}")
+
         return False
 
     def on_hover(self, widget, event):
@@ -336,17 +356,26 @@ class SuperMicroAppManager(Gtk.Window):
                 with open(config_path) as f:
                     config = yaml.safe_load(f) or {}
 
+                # Validate required fields - accept EITHER 'command' OR 'module'
                 if 'name' not in config:
                     print(f"⚠️ Skipping {app_folder.name}: missing 'name' in config")
                     continue
 
-                if 'command' not in config:
-                    print(f"⚠️ Skipping {app_folder.name}: missing 'command' in config")
+                # Accept 'command' (scripts) OR 'module' (GUI apps)
+                if 'command' not in config and 'module' not in config:
+                    print(f"⚠️ Skipping {app_folder.name}: missing 'command' or 'module' in config")
                     continue
 
                 config['_base_dir'] = app_folder
+
+                # Determine app type
+                if 'module' in config:
+                    config['type'] = 'gui'
+                else:
+                    config['type'] = 'script'
+
                 loaded_apps.append(config)
-                print(f"✅ Loaded: {config['name']} ({app_folder.name})")
+                print(f"✅ Loaded: {config['name']} ({app_folder.name}) - {config['type']}")
 
             except Exception as e:
                 print(f"❌ Failed to load {app_folder.name}: {e}")
@@ -457,7 +486,6 @@ class SuperMicroAppManager(Gtk.Window):
             for idx, app in enumerate(filtered_apps):
                 if not app.get('enabled', True):
                     continue
-
                 tile = AppTile(
                     name=app.get("name", "Unknown"),
                     description=app.get("description", ""),
@@ -465,7 +493,8 @@ class SuperMicroAppManager(Gtk.Window):
                     command=app.get("command", ""),
                     script_dir=Path(__file__).parent.resolve(),
                     app_base_dir=app.get("_base_dir"),
-                    index=idx
+                    index=idx,
+                    app_config=app  # Pass entire config!
                 )
 
                 self.tiles_vbox.pack_start(tile, False, False, 0)

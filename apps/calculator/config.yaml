@@ -1,6 +1,6 @@
 # apps/hello_world/config.yaml
-name: "Hello World"
-description: "Displays a greeting message"
+name: "Calculator"
+description: "Calculator"
 module: "app"           # The Python file (app.py)
 icon: "./icon.png"
 enabled: true
