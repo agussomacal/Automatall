@@ -1,0 +1,10 @@
+# apps/pdf_sanitizer/config.yaml
+name: "PDF Sanitizer"
+description: "Remove hidden text/metadata by converting through images"
+module: "app"
+icon: "./icon.png"
+enabled: true
+category: "media"
+type: "gui"
+version: "1.0"
+tags: [pdf]
