@@ -1,42 +1,47 @@
 #!/usr/bin/env python3
-"""SuperMicroAppManager - A modular app launcher hub"""
+"""SuperMicroAppManager - A modular app launcher hub with filtering"""
 
 import gi
 
 gi.require_version('Gtk', '3.0')
-from gi.repository import Gtk, Gdk
+from gi.repository import Gtk, Gdk, GdkPixbuf
 import subprocess
 import yaml
 import os
 import stat
+import json
 from pathlib import Path
 
 # TILE CONFIGURATION
 ICON_SIZE = 32
 TILE_WIDTH = 180
-TILE_HEIGHT = 100
 SPACING = 15
+
+# App order persistence file
+PERSISTENCE_FILE = "app_order.json"
 
 
 class AppTile(Gtk.EventBox):
-    """Individual app tile in the list"""
+    """Individual app tile"""
 
-    def __init__(self, name, description, icon, command, script_dir=None, app_base_dir=None):
+    def __init__(self, name, description, icon, command, script_dir=None,
+                 app_base_dir=None, index=0, reorder_callback=None):
         super().__init__()
         self.name = name
         self.app_base_dir = app_base_dir or script_dir or Path(__file__).parent.resolve()
         self.script_dir = script_dir or Path(__file__).parent.resolve()
+        self.index = index
 
-        # Convert relative command paths to absolute (relative to APP folder)
+        # Convert relative command paths to absolute
         if command.startswith('./'):
             abs_command = str(self.app_base_dir / command.lstrip('./'))
             self.command = abs_command
         elif command.startswith('/'):
             self.command = command
         else:
-            # Assume it's relative to app folder
             self.command = str(self.app_base_dir / command)
 
+        # Connect single-click event (remove D&D handlers)
         self.connect("button-press-event", self.on_clicked)
         self.connect("enter-notify-event", self.on_hover)
         self.connect("leave-notify-event", self.on_leave)
@@ -49,7 +54,7 @@ class AppTile(Gtk.EventBox):
         main_hbox.set_margin_top(8)
         main_hbox.set_margin_bottom(8)
 
-        # --- Icon ---
+        # Icon
         self.icon_area = Gtk.Box()
         self.icon_area.set_size_request(ICON_SIZE, ICON_SIZE)
 
@@ -60,19 +65,17 @@ class AppTile(Gtk.EventBox):
             icon_path = Path(expanded_icon)
 
             if not icon_path.is_absolute():
-                # Try app folder first, then fall back to shared icons
                 icon_path = self.app_base_dir / icon
                 if not icon_path.exists():
                     icon_path = self.script_dir / "icons" / icon
 
             if icon_path.exists():
                 try:
-                    from gi.repository import GdkPixbuf
                     scaled_pixbuf = GdkPixbuf.Pixbuf.new_from_file_at_scale(
                         str(icon_path), ICON_SIZE, ICON_SIZE, True
                     )
                     self.image.set_from_pixbuf(scaled_pixbuf)
-                except Exception as e:
+                except Exception:
                     self.image.set_from_icon_name("utilities-terminal", Gtk.IconSize.SMALL_TOOLBAR)
             else:
                 self.image.set_from_icon_name("utilities-terminal", Gtk.IconSize.SMALL_TOOLBAR)
@@ -81,7 +84,7 @@ class AppTile(Gtk.EventBox):
 
         self.icon_area.pack_start(self.image, False, False, 0)
 
-        # --- Text ---
+        # Text section
         text_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         text_box.set_spacing(2)
 
@@ -105,9 +108,9 @@ class AppTile(Gtk.EventBox):
         self.show_all()
 
     def on_clicked(self, widget, event):
+        """Execute command on click"""
         if event.button == 1:
             print(f"▶️ Executing: {self.command}")
-
             try:
                 if self.command.endswith('.sh'):
                     subprocess.Popen(['/bin/bash', self.command])
@@ -117,7 +120,7 @@ class AppTile(Gtk.EventBox):
                 print(f"⚠️ Permission denied: {self.command}")
             except FileNotFoundError:
                 print(f"⚠️ Command not found: {self.command}")
-            return True
+        return False
 
     def on_hover(self, widget, event):
         self.override_background_color(Gtk.StateType.NORMAL, Gdk.RGBA(red=0.4, green=0.3, blue=0.6, alpha=0.15))
@@ -129,41 +132,117 @@ class AppTile(Gtk.EventBox):
 
 
 class SuperMicroAppManager(Gtk.Window):
-    """Main application window"""
+    """Main application window with filtering"""
 
     def __init__(self):
         super().__init__(title="SuperMicroAppManager")
-        self.set_default_size(400, 600)
+        self.set_default_size(500, 650)
         self.set_border_width(20)
 
+        # === INITIALIZE ALL ATTRIBUTES FIRST ===
         # Discover and load apps
         self.apps = self.discover_apps()
+        self.original_apps = self.apps.copy()
 
-        # Create scrollable container
-        scrolled_window = Gtk.ScrolledWindow()
-        scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
-        scrolled_window.set_margin_start(5)
-        scrolled_window.set_margin_end(5)
+        # Load saved order
+        self.load_app_order()
 
+        # Current filter state
+        self.current_category = "All"
+        self.search_query = ""
+
+        # Create tile container (used by populate_tiles)
         self.tiles_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         self.tiles_vbox.set_spacing(SPACING)
         self.tiles_vbox.set_margin_start(5)
         self.tiles_vbox.set_margin_end(5)
 
-        scrolled_window.add(self.tiles_vbox)
+        # Create count label (used by update_count_label -> populate_tiles)
+        self.count_label = Gtk.Label()
 
-        # Header with app count
-        app_count = len([a for a in self.apps if a.get('enabled', True)])
+        # Create search entry (used by on_search_changed)
+        self.search_entry = Gtk.Entry()
+
+        # Category buttons dict
+        self.category_buttons = {}
+
+        # === NOW CREATE UI LAYOUT ===
+        # Create main vertical layout
+        main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        main_vbox.set_spacing(15)
+        main_vbox.set_border_width(15)
+
+        # === HEADER ===
         header_label = Gtk.Label()
-        header_label.set_markup(
-            f'<span size="x-large" weight="bold">✨ SuperMicro App Manager ✨</span>\n'
-            f'<span size="small">{app_count} app(s) discovered</span>'
-        )
-        header_label.set_margin_bottom(15)
+        header_label.set_markup('<span size="x-large" weight="bold">✨ SuperMicro App Manager ✨</span>')
+        main_vbox.pack_start(header_label, False, False, 5)
 
-        # Footer
+        # === SEARCH BOX ===
+        search_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        search_box.set_spacing(10)
+
+        self.search_entry.set_placeholder_text("🔍 Search apps by name, description, or tag...")
+        self.search_entry.set_hexpand(True)
+        self.search_entry.connect("changed", self.on_search_changed)
+
+        clear_btn = Gtk.Button(label="✕")
+        clear_btn.set_size_request(30, 30)
+        clear_btn.connect("clicked", self.clear_search)
+
+        search_box.pack_start(self.search_entry, True, True, 0)
+        search_box.pack_start(clear_btn, False, False, 0)
+        main_vbox.pack_start(search_box, False, False, 0)
+
+        # === CATEGORY FILTERS ===
+        cat_scroll = Gtk.ScrolledWindow()
+        cat_scroll.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        cat_scroll.set_min_content_height(40)
+        cat_scroll.set_vexpand(False)
+
+        cat_hbox = Gtk.FlowBox()
+        cat_hbox.set_selection_mode(Gtk.SelectionMode.NONE)
+        cat_hbox.set_max_children_per_line(8)
+        cat_hbox.set_min_children_per_line(4)
+        cat_hbox.set_column_spacing(5)
+        cat_hbox.set_row_spacing(5)
+
+        # Get unique categories
+        categories = sorted(set(app.get('category', 'Uncategorized') for app in self.apps))
+        categories = ['All'] + categories
+
+        for category in categories:
+            btn = Gtk.ToggleButton(
+                label=f"{category} ({sum(1 for a in self.apps if a.get('category', 'Uncategorized') == category)})")
+            btn.set_margin_start(5)
+            btn.set_margin_end(5)
+            btn.connect("toggled", self.on_category_toggled, category)
+
+            if category == 'All':
+                btn.set_active(True)
+                self.category_buttons['All'] = btn
+
+            self.category_buttons[category] = btn
+            cat_hbox.add(btn)
+
+        cat_scroll.add(cat_hbox)
+        main_vbox.pack_start(cat_scroll, False, False, 0)
+
+        # === APP COUNT LABEL ===
+        self.count_label.set_markup('<span size="small">0/0 app(s) visible</span>')
+        main_vbox.pack_start(self.count_label, False, False, 0)
+
+        # === SCROLLABLE TILES AREA ===
+        scrolled_window = Gtk.ScrolledWindow()
+        scrolled_window.set_policy(Gtk.PolicyType.NEVER, Gtk.PolicyType.AUTOMATIC)
+        scrolled_window.set_margin_start(5)
+        scrolled_window.set_margin_end(5)
+
+        scrolled_window.add(self.tiles_vbox)
+        main_vbox.pack_start(scrolled_window, True, True, 0)
+
+        # === FOOTER ===
         footer_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        footer_box.set_margin_top(15)
+        footer_box.set_margin_top(10)
 
         refresh_btn = Gtk.Button(label="↻ Refresh")
         refresh_btn.connect("clicked", lambda _: self.refresh())
@@ -177,15 +256,59 @@ class SuperMicroAppManager(Gtk.Window):
         close_btn.connect("clicked", lambda _: self.destroy())
         footer_box.pack_end(close_btn, False, False, 5)
 
-        main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        main_vbox.pack_start(header_label, False, False, 0)
-        main_vbox.pack_start(scrolled_window, True, True, 0)
         main_vbox.pack_start(footer_box, False, False, 0)
 
         self.add(main_vbox)
 
+        # Now populate tiles (all attributes exist!)
         self.populate_tiles()
         self.show_all()
+
+    def on_search_changed(self, entry):
+        self.search_query = entry.get_text().lower()
+        self.populate_tiles()
+
+    def clear_search(self, button):
+        self.search_entry.set_text("")
+        self.search_query = ""
+        self.populate_tiles()
+
+    def on_category_toggled(self, button, category):
+        if button.get_active():
+            # Deactivate all other categories
+            for cat, btn in self.category_buttons.items():
+                if cat != category:
+                    btn.set_active(False)
+
+            self.current_category = category
+            self.populate_tiles()
+
+    def update_count_label(self):
+        total = len(self.apps)
+        visible = len([a for a in self.apps if self.matches_filters(a)])
+        self.count_label.set_markup(
+            f'<span size="small">{visible}/{total} app(s) visible</span>'
+        )
+
+    def matches_filters(self, app):
+        """Check if app passes current search and category filters"""
+        # Category filter
+        if self.current_category != "All":
+            if app.get('category', 'Uncategorized') != self.current_category:
+                return False
+
+        # Search filter
+        if self.search_query:
+            name = app.get('name', '').lower()
+            desc = app.get('description', '').lower()
+            tags = ' '.join(app.get('tags', [])).lower()
+
+            if not (self.search_query in name or
+                    self.search_query in desc or
+                    self.search_query in tags):
+                return False
+
+        return True
 
     def discover_apps(self):
         """Scan apps/ folder for self-contained app modules."""
@@ -211,9 +334,8 @@ class SuperMicroAppManager(Gtk.Window):
 
             try:
                 with open(config_path) as f:
-                    config = yaml.safe_load(f)
+                    config = yaml.safe_load(f) or {}
 
-                # Validate required fields
                 if 'name' not in config:
                     print(f"⚠️ Skipping {app_folder.name}: missing 'name' in config")
                     continue
@@ -222,7 +344,7 @@ class SuperMicroAppManager(Gtk.Window):
                     print(f"⚠️ Skipping {app_folder.name}: missing 'command' in config")
                     continue
 
-                config['_base_dir'] = app_folder  # Store base directory
+                config['_base_dir'] = app_folder
                 loaded_apps.append(config)
                 print(f"✅ Loaded: {config['name']} ({app_folder.name})")
 
@@ -230,6 +352,46 @@ class SuperMicroAppManager(Gtk.Window):
                 print(f"❌ Failed to load {app_folder.name}: {e}")
 
         return loaded_apps
+
+    def load_app_order(self):
+        """Load saved app order from JSON file."""
+        script_dir = Path(__file__).parent.resolve()
+        order_file = script_dir / PERSISTENCE_FILE
+
+        if not order_file.exists():
+            return
+
+        try:
+            with open(order_file) as f:
+                saved_order = json.load(f)
+
+            # Reorder apps to match saved order
+            ordered_apps = []
+            for name in saved_order:
+                for i, app in enumerate(self.apps):
+                    if app.get('name') == name:
+                        ordered_apps.append(self.apps.pop(i))
+                        break
+
+            ordered_apps.extend(self.apps)
+            self.apps = ordered_apps
+            print(f"📝 Restored saved order ({len(saved_order)} apps)")
+
+        except Exception as e:
+            print(f"⚠️ Could not load app order: {e}")
+
+    def save_app_order(self):
+        """Save current app order to JSON file."""
+        script_dir = Path(__file__).parent.resolve()
+        order_file = script_dir / PERSISTENCE_FILE
+
+        try:
+            order_list = [app.get('name') for app in self.apps]
+            with open(order_file, 'w') as f:
+                json.dump(order_list, f, indent=2)
+            print(f"💾 Saved app order ({len(order_list)} apps)")
+        except Exception as e:
+            print(f"⚠️ Could not save app order: {e}")
 
     def ensure_script_executable(self, script_path):
         """Ensure script files have executable permissions."""
@@ -278,37 +440,42 @@ class SuperMicroAppManager(Gtk.Window):
         for child in self.tiles_vbox.get_children():
             self.tiles_vbox.remove(child)
 
-        # Auto-fix script permissions BEFORE creating tiles
+        # Auto-fix script permissions
         self.ensure_all_scripts_executable()
 
-        if not self.apps:
+        filtered_apps = [a for a in self.apps if self.matches_filters(a)]
+
+        if not filtered_apps:
             msg = Gtk.Label(
-                label="📭 No apps found.\n\n"
-                      "Create app folders in ~/repos/SuperMicroAppManager/apps/\n"
-                      "Each folder needs a config.yaml with 'name' and 'command'"
+                label=f"🔍 No apps match your filter.\n"
+                      f"Try clearing search or selecting 'All' category."
             )
             msg.set_use_markup(True)
             msg.set_justify(Gtk.Justification.CENTER)
             self.tiles_vbox.pack_start(msg, False, False, 10)
-            return
+        else:
+            for idx, app in enumerate(filtered_apps):
+                if not app.get('enabled', True):
+                    continue
 
-        for app in self.apps:
-            if not app.get('enabled', True):
-                continue
+                tile = AppTile(
+                    name=app.get("name", "Unknown"),
+                    description=app.get("description", ""),
+                    icon=app.get("icon"),
+                    command=app.get("command", ""),
+                    script_dir=Path(__file__).parent.resolve(),
+                    app_base_dir=app.get("_base_dir"),
+                    index=idx
+                )
 
-            tile = AppTile(
-                name=app.get("name", "Unknown"),
-                description=app.get("description", ""),
-                icon=app.get("icon"),
-                command=app.get("command", ""),
-                script_dir=Path(__file__).parent.resolve(),
-                app_base_dir=app.get("_base_dir")
-            )
-            self.tiles_vbox.pack_start(tile, False, False, 0)
+                self.tiles_vbox.pack_start(tile, False, False, 0)
+
+        self.update_count_label()
 
     def refresh(self):
         print("🔄 Re-scanning apps...")
         self.apps = self.discover_apps()
+        self.original_apps = self.apps.copy()
         self.populate_tiles()
 
 
