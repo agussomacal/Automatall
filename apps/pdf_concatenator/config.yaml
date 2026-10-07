@@ -1,5 +1,5 @@
 # apps/pdf_concatenator/config.yaml
-name: "Pdf Concatenator"
+name: "PDF Concatenator"
 description: "Concatenates several pdf in one"
 module: "app"
 icon: "./icon.png"
