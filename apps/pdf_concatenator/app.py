@@ -23,27 +23,28 @@ class PDFTile(Gtk.Box):
         'tile-remove': (GObject.SignalFlags.RUN_FIRST, None, (object,))
     }
 
-    def __init__(self, file_path, index):
+    def __init__(self, file_path, index, on_move_callback=None):
         super().__init__(orientation=Gtk.Orientation.HORIZONTAL)
         self.file_path = file_path
         self.index = index
+        self.selected = False
+        self.on_move_callback = on_move_callback
         self.set_spacing(8)
         self.set_margin_start(8)
         self.set_margin_end(8)
         self.set_margin_top(5)
         self.set_margin_bottom(5)
-        self.set_can_focus(False)
+        self.set_can_focus(True)
 
         # Background styling for tile - IMPORTANT: visible borders
         self.get_style_context().add_class("pdf-tile")
 
-        # Index label
-        idx_label = Gtk.Label(label=f"{index + 1}")
-        idx_label.set_size_request(25, -1)
-        idx_label.set_xalign(0.5)
-        idx_label.set_yalign(0.5)
-        self.idx_label = idx_label
-        self.pack_start(idx_label, False, False, 0)
+        # Selection indicator
+        self.selection_indicator = Gtk.Label(label="○")
+        self.selection_indicator.set_size_request(25, -1)
+        self.selection_indicator.set_xalign(0.5)
+        self.selection_indicator.set_yalign(0.5)
+        self.pack_start(self.selection_indicator, False, False, 0)
 
         # Icon
         try:
@@ -59,6 +60,17 @@ class PDFTile(Gtk.Box):
         name_label.set_xalign(0)
         self.pack_start(name_label, True, True, 0)
 
+        # Move buttons
+        move_up_btn = Gtk.Button(label="↑")
+        move_up_btn.set_size_request(25, 28)
+        move_up_btn.connect("clicked", self._on_move_up)
+        self.pack_start(move_up_btn, False, False, 2)
+
+        move_down_btn = Gtk.Button(label="↓")
+        move_down_btn.set_size_request(25, 28)
+        move_down_btn.connect("clicked", self._on_move_down)
+        self.pack_start(move_down_btn, False, False, 2)
+
         # Remove button
         remove_btn = Gtk.Button(label="×")
         remove_btn.get_style_context().add_class("destructive-action")
@@ -66,8 +78,49 @@ class PDFTile(Gtk.Box):
         remove_btn.connect("clicked", self.on_remove)
         self.pack_start(remove_btn, False, False, 5)
 
+        # Connect keyboard events
+        self.connect("key-press-event", self.on_key_press)
+
+        # Enable selection click
+        self.connect("button-press-event", self.on_button_press)
+
         # Debug: confirm tile creation
         print(f"[DEBUG] Tile created for: {os.path.basename(file_path)}")
+
+    def _on_move_up(self, button):
+        if self.on_move_callback:
+            self.on_move_callback(self.file_path, "up")
+
+    def _on_move_down(self, button):
+        if self.on_move_callback:
+            self.on_move_callback(self.file_path, "down")
+
+    def on_key_press(self, widget, event):
+        """Handle keyboard shortcuts when tile is selected"""
+        if not self.selected:
+            return False
+
+        # Up arrow
+        if event.keyval == Gdk.KEY_Up:
+            if self.on_move_callback:
+                self.on_move_callback(self.file_path, "up")
+            return True
+
+        # Down arrow
+        elif event.keyval == Gdk.KEY_Down:
+            if self.on_move_callback:
+                self.on_move_callback(self.file_path, "down")
+            return True
+
+        return False
+
+    def on_button_press(self, widget, event):
+        """Handle click to select"""
+        if event.button == 1:  # Left click
+            if self.on_move_callback:
+                self.on_move_callback(self.file_path, "select")
+            return True
+        return False
 
     def on_remove(self, button):
         # Emit custom signal
@@ -75,7 +128,28 @@ class PDFTile(Gtk.Box):
         self.emit('tile-remove', self)
 
     def on_drag_data_get(self, widget, drag_context, selection_data, info, time):
+        # Send the file_path as text so receiver can identify it
         selection_data.set_text(str(self.file_path), -1)
+        print("[DEBUG] Drag data sent: {}".format(os.path.basename(self.file_path)))
+
+    def on_drag_begin(self, widget, context):
+        """Visual feedback when drag starts"""
+        self.set_opacity(0.6)
+        print("[DEBUG] Drag started for: {}".format(os.path.basename(self.file_path)))
+
+    def on_drag_end(self, widget, context):
+        """Reset opacity when drag ends"""
+        self.set_opacity(1.0)
+
+    def set_selected(self, selected):
+        """Change selection state"""
+        self.selected = selected
+        if selected:
+            self.get_style_context().add_class("selected")
+            self.selection_indicator.set_text("●")
+        else:
+            self.get_style_context().remove_class("selected")
+            self.selection_indicator.set_text("○")
 
 
 class PDFConcatenatorApp(Gtk.Window):
@@ -88,6 +162,7 @@ class PDFConcatenatorApp(Gtk.Window):
         self.logic = PDFConcatenatorLogic()
         self.files = []  # List of file paths in order
         self.inferred_folder = None  # Track inferred output folder from first file
+        self.selected_tile = None  # Currently selected tile
 
         # Main Layout
         main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -100,9 +175,11 @@ class PDFConcatenatorApp(Gtk.Window):
         main_vbox.pack_start(header, False, False, 0)
 
         subtitle = Gtk.Label()
-        subtitle.set_markup("<small>Drag & Drop PDF files below to merge them into one document</small>")
+        subtitle.set_markup(
+            "<small>Drag & Drop PDF files below to merge them into one document. Click a file to select, then use ↑↓ arrows to reorder.</small>")
         subtitle.set_sensitive(True)
         subtitle.set_justify(Gtk.Justification.CENTER)
+        subtitle.set_line_wrap(True)
         main_vbox.pack_start(subtitle, False, False, 0)
 
         # Split view: Left = Drop Zone, Right = File List
@@ -173,7 +250,7 @@ class PDFConcatenatorApp(Gtk.Window):
         self.list_count_label = list_label  # Reference to update count
         right_vbox.pack_start(list_label, False, False, 0)
 
-        # Scrollable file list - FIXED: ensure visibility
+        # Scrollable file list
         self.scroll_win = Gtk.ScrolledWindow()
         self.scroll_win.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
         self.scroll_win.set_min_content_height(250)
@@ -245,11 +322,10 @@ class PDFConcatenatorApp(Gtk.Window):
         # Apply CSS styling
         self.apply_css()
 
-        print("[INFO] PDF Concatenator app initialized. Terminal will show debug messages.")
+        print("[INFO] PDF Concatenator app initialized. Click a file to select, use ↑↓ to reorder.")
 
     def apply_css(self):
         css_provider = Gtk.CssProvider()
-        # KEY FIX: Make tiles VISIBLY distinct with borders and colors
         css_provider.load_from_data(b"""
             #drop_zone {
                 border: 3px dashed #6d4aff;
@@ -273,6 +349,12 @@ class PDFConcatenatorApp(Gtk.Window):
                 background-color: #e8e8ff;
                 border-color: #6d4aff;
             }
+            .pdf-tile.selected {
+                background-color: rgba(109, 76, 255, 0.3);
+                border-color: #4a3acc;
+                border-width: 2px;
+                box-shadow: 0 2px 6px rgba(109, 76, 255, 0.3);
+            }
             .tile-list {
                 background-color: #fafafa;
             }
@@ -291,6 +373,58 @@ class PDFConcatenatorApp(Gtk.Window):
         screen = Gdk.Screen.get_default()
         style_context = self.get_style_context()
         style_context.add_provider_for_screen(screen, css_provider, Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION)
+
+    def handle_tile_action(self, file_path, action):
+        """Handle tile actions (select, move up, move down)"""
+        if action == "select":
+            print(f"[DEBUG] Selected: {os.path.basename(file_path)}")
+            # Deselect all others
+            for row in self.file_list:
+                if isinstance(row, Gtk.ListBoxRow):
+                    child = row.get_child()
+                    if isinstance(child, PDFTile) and child.file_path != file_path:
+                        child.set_selected(False)
+
+            # Find and select clicked tile
+            for row in self.file_list:
+                if isinstance(row, Gtk.ListBoxRow):
+                    child = row.get_child()
+                    if isinstance(child, PDFTile) and child.file_path == file_path:
+                        child.set_selected(True)
+                        self.selected_tile = child
+                        self.update_status(f"Selected: {os.path.basename(file_path)}")
+                        break
+
+        elif action in ["up", "down"]:
+            print(f"[DEBUG] Move {action}: {os.path.basename(file_path)}")
+            if file_path not in self.files:
+                return
+
+            idx = self.files.index(file_path)
+            new_idx = idx - 1 if action == "up" else idx + 1
+
+            if new_idx < 0 or new_idx >= len(self.files):
+                self.update_status("Cannot move further in that direction")
+                return
+
+            # Swap in files list
+            self.files[idx], self.files[new_idx] = self.files[new_idx], self.files[idx]
+
+            # Rebuild list to reflect new order
+            self._rebuild_file_list()
+
+            # Re-select the moved tile
+            self.handle_tile_action(file_path, "select")
+            self.update_status(f"Moved {os.path.basename(file_path)} to position {new_idx + 1}")
+
+    def _rebuild_file_list(self):
+        """Rebuild the file list UI"""
+        self.file_list.foreach(lambda w: self.file_list.remove(w))
+        for i, path in enumerate(self.files):
+            tile = PDFTile(path, i, on_move_callback=self.handle_tile_action)
+            tile.connect("tile-remove", self.remove_tile)
+            tile.show_all()
+            self.file_list.add(tile)
 
     def update_file_list_count(self):
         """Update the 'Added Files' label count"""
@@ -371,12 +505,12 @@ class PDFConcatenatorApp(Gtk.Window):
             self.file_list.foreach(lambda w: self.file_list.remove(w))
 
         self.files.append(path)
-        tile = PDFTile(path, len(self.files) - 1)
-        tile.connect("tile-remove", self.remove_tile)
-        self.file_list.add(tile)
 
-        # FORCE SHOW the tile
+        # Create tile with callback
+        tile = PDFTile(path, len(self.files) - 1, on_move_callback=self.handle_tile_action)
+        tile.connect("tile-remove", self.remove_tile)
         tile.show_all()
+        self.file_list.add(tile)
 
         # Safe scrolling
         parent = self.file_list.get_parent()
@@ -406,25 +540,18 @@ class PDFConcatenatorApp(Gtk.Window):
                     print("[DEBUG] Removed row from listbox")
                     break
 
+        # Clear selection if removed tile was selected
+        if self.selected_tile and self.selected_tile.file_path == tile.file_path:
+            self.selected_tile = None
+
         # Reorder remaining tiles
-        self.reorder_indices()
+        self._rebuild_file_list()  # Rebuild to fix indices
 
         # Update count and status
         self.update_file_list_count()
         self.update_status("File removed")
 
-        # Force redraw
-        self.file_list.queue_draw()
-        self.scroll_win.queue_draw()
-
         print("[DEBUG] Remaining files: {}".format(len(self.files)))
-
-    def reorder_indices(self):
-        """Re-number the tiles after removal"""
-        for i, row in enumerate(self.file_list):
-            if isinstance(row, PDFTile):
-                row.idx_label.set_text(str(i + 1))
-                row.index = i
 
     def on_browse_click(self, button=None, event=None):
         """Open file browser dialog"""
@@ -525,8 +652,8 @@ class PDFConcatenatorApp(Gtk.Window):
 
     def on_clear(self, button):
         self.files.clear()
-        for row in list(self.file_list.get_children()):
-            self.file_list.remove(row)
+        self.selected_tile = None
+        self.file_list.foreach(lambda w: self.file_list.remove(w))
         self.update_file_list_count()
         self.update_status("Cleared all files")
 
