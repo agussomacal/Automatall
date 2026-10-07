@@ -1,0 +1,11 @@
+# apps/pdf_concatenator/config.yaml
+name: "Pdf Concatenator"
+description: "Concatenates several pdf in one"
+module: "app"
+icon: "./icon.png"
+enabled: true
+category: "media"
+type: "gui"
+version: "1.0"
+author: ""
+tags: ['pdf', 'concatenate']

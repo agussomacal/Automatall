@@ -1,0 +1,25 @@
+# apps/pdf_concatenator/dependencies.yaml
+# Required dependencies for PDF Concatenator app
+
+dependencies:
+  - name: ghostscript
+    binary: gs
+    description: "PDF processor for merging files"
+    optional: false
+    install_commands:
+      apt: "sudo apt install -y ghostscript"
+      dnf: "sudo dnf install -y ghostscript"
+      pacman: "sudo pacman -S --noconfirm ghostscript"
+      brew: "brew install ghostscript"
+    version_flag: "--version"
+
+  - name: qpdf
+    binary: qpdf
+    description: "Optional: PDF transformation tool (for advanced optimization)"
+    optional: true
+    install_commands:
+      apt: "sudo apt install -y qpdf"
+      dnf: "sudo dnf install -y qpdf"
+      pacman: "sudo pacman -S qpdf"
+      brew: "brew install qpdf"
+    version_flag: "--help"
