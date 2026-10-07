@@ -87,6 +87,7 @@ class PDFConcatenatorApp(Gtk.Window):
 
         self.logic = PDFConcatenatorLogic()
         self.files = []  # List of file paths in order
+        self.inferred_folder = None  # Track inferred output folder from first file
 
         # Main Layout
         main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -359,6 +360,12 @@ class PDFConcatenatorApp(Gtk.Window):
                 self.show_info("File already in list")
             return False
 
+        # Infer output folder from first file
+        if self.inferred_folder is None:
+            self.inferred_folder = os.path.dirname(os.path.abspath(path))
+            self.output_folder.set_text(self.inferred_folder)
+            print(f"[DEBUG] Inferred output folder: {self.inferred_folder}")
+
         # Clear empty state if first file
         if len(self.files) == 0:
             self.file_list.foreach(lambda w: self.file_list.remove(w))
@@ -369,7 +376,7 @@ class PDFConcatenatorApp(Gtk.Window):
         self.file_list.add(tile)
 
         # FORCE SHOW the tile
-        tile.show_all()  # <-- ADD THIS
+        tile.show_all()
 
         # Safe scrolling
         parent = self.file_list.get_parent()
@@ -451,19 +458,26 @@ class PDFConcatenatorApp(Gtk.Window):
         chooser.destroy()  # Always destroy after run()
 
     def on_browse_folder(self, button):
+        # Use current inferred folder as starting point
+        start_folder = self.output_folder.get_text()
+        if not start_folder or not os.path.isdir(start_folder):
+            start_folder = self.inferred_folder or os.getcwd()
+
         chooser = Gtk.FileChooserDialog(
             title="Select Output Folder",
             parent=self,
             action=Gtk.FileChooserAction.SELECT_FOLDER
         )
-        chooser.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_SELECT, Gtk.ResponseType.OK)
+        chooser.set_current_folder(start_folder)
+        chooser.add_buttons(Gtk.STOCK_CANCEL, Gtk.ResponseType.CANCEL, Gtk.STOCK_OPEN, Gtk.ResponseType.OK)
 
-        current_text = self.output_folder.get_text()
-        if current_text and os.path.isdir(current_text):
-            chooser.set_current_folder(current_text)
+        response = chooser.run()
+        if response == Gtk.ResponseType.OK:
+            folder = chooser.get_filename()
+            self.output_folder.set_text(folder)
+            self.inferred_folder = folder  # Update inferred folder
+            print(f"[DEBUG] Output folder set to: {folder}")
 
-        if chooser.run() == Gtk.ResponseType.OK:
-            self.output_folder.set_text(chooser.get_filename())
         chooser.destroy()
 
     def on_merge(self, button):
@@ -471,8 +485,8 @@ class PDFConcatenatorApp(Gtk.Window):
             self.show_error("Please add at least 2 PDF files to merge.")
             return
 
-        # Use selected folder as default
-        default_folder = self.output_folder.get_text() or os.getcwd()
+        # Use selected folder or inferred folder
+        default_folder = self.output_folder.get_text() or self.inferred_folder or os.getcwd()
         if not os.path.isdir(default_folder):
             default_folder = os.getcwd()
 
