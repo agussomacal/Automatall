@@ -28,18 +28,20 @@ class PDFTile(Gtk.Box):
         self.file_path = file_path
         self.index = index
         self.set_spacing(8)
-        self.set_margin_start(5)
-        self.set_margin_end(5)
-        self.set_margin_top(3)
-        self.set_margin_bottom(3)
+        self.set_margin_start(8)
+        self.set_margin_end(8)
+        self.set_margin_top(5)
+        self.set_margin_bottom(5)
         self.set_can_focus(False)
 
-        # Background styling for tile
+        # Background styling for tile - IMPORTANT: visible borders
         self.get_style_context().add_class("pdf-tile")
 
         # Index label
         idx_label = Gtk.Label(label=f"{index + 1}")
         idx_label.set_size_request(25, -1)
+        idx_label.set_xalign(0.5)
+        idx_label.set_yalign(0.5)
         self.idx_label = idx_label
         self.pack_start(idx_label, False, False, 0)
 
@@ -48,12 +50,13 @@ class PDFTile(Gtk.Box):
             img = Gtk.Image.new_from_icon_name("application-pdf", Gtk.IconSize.SMALL_TOOLBAR)
         except:
             img = Gtk.Label(label="📄")
-        self.pack_start(img, False, False, 0)
+        self.pack_start(img, False, False, 5)
 
         # Filename (truncated with ellipsis)
         name_label = Gtk.Label(label=os.path.basename(file_path))
         name_label.set_hexpand(True)
         name_label.set_ellipsize(Pango.EllipsizeMode.END)
+        name_label.set_xalign(0)
         self.pack_start(name_label, True, True, 0)
 
         # Remove button
@@ -61,26 +64,24 @@ class PDFTile(Gtk.Box):
         remove_btn.get_style_context().add_class("destructive-action")
         remove_btn.set_size_request(28, 28)
         remove_btn.connect("clicked", self.on_remove)
-        self.pack_start(remove_btn, False, False, 0)
+        self.pack_start(remove_btn, False, False, 5)
 
-        # Drag setup (optional for reordering)
-        targets = [Gtk.TargetEntry.new("text/plain", 0, 0)]
-        self.drag_source_set(Gdk.ModifierType.BUTTON1_MASK, targets, Gdk.DragAction.MOVE)
-        self.connect("drag-data-get", self.on_drag_data_get)
+        # Debug: confirm tile creation
+        print(f"[DEBUG] Tile created for: {os.path.basename(file_path)}")
 
     def on_remove(self, button):
         # Emit custom signal
+        print(f"[DEBUG] Removing tile: {os.path.basename(self.file_path)}")
         self.emit('tile-remove', self)
 
     def on_drag_data_get(self, widget, drag_context, selection_data, info, time):
         selection_data.set_text(str(self.file_path), -1)
-        Gtk.drag_finish(drag_context, True, False, time)
 
 
 class PDFConcatenatorApp(Gtk.Window):
     def __init__(self):
         super().__init__(title="PDF Concatenator")
-        self.set_default_size(700, 600)
+        self.set_default_size(800, 650)
         self.set_border_width(15)
         self.set_resizable(True)
 
@@ -167,35 +168,32 @@ class PDFConcatenatorApp(Gtk.Window):
         list_label = Gtk.Label()
         list_label.set_markup("<b>Added Files</b> <small>(0)</small>")
         list_label.set_halign(Gtk.Align.START)
+        list_label.set_xalign(0)
         self.list_count_label = list_label  # Reference to update count
         right_vbox.pack_start(list_label, False, False, 0)
 
-        # Scrollable file list
+        # Scrollable file list - FIXED: ensure visibility
         self.scroll_win = Gtk.ScrolledWindow()
         self.scroll_win.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
-        self.scroll_win.set_min_content_height(200)
-        self.scroll_win.set_max_content_height(400)
-        self.scroll_win.set_shadow_type(Gtk.ShadowType.IN)
+        self.scroll_win.set_min_content_height(250)
+        self.scroll_win.set_max_content_height(500)
+        self.scroll_win.set_shadow_type(Gtk.ShadowType.ETCHED_IN)
         self.scroll_win.set_vexpand(True)
         self.scroll_win.set_hexpand(True)
+        self.scroll_win.get_style_context().add_class("scroll-container")
 
         self.file_list = Gtk.ListBox()
-        self.file_list.set_selection_mode(Gtk.SelectionMode.SINGLE)
-        self.file_list.set_activate_on_single_click(True)
+        self.file_list.set_selection_mode(Gtk.SelectionMode.NONE)
+        self.file_list.set_activate_on_single_click(False)
         self.file_list.get_style_context().add_class("tile-list")
 
-        # Add file_list DIRECTLY to scroll window (not via placeholder)
+        # Add file_list DIRECTLY to scroll window
         self.scroll_win.add(self.file_list)
-
-        # Store ref for later updates
-        self.file_list.set_hexpand(True)
-        self.file_list.set_vexpand(True)
 
         right_vbox.pack_start(self.scroll_win, True, True, 0)
 
         # Add panes to Paned widget
-        paned.pack1(drop_box, resize=True, shrink=True)  # LEFT: resizable
-        paned.pack2(right_vbox, resize=False, shrink=False)  # RIGHT: fixed
+        paned.pack2(right_vbox, resize=False, shrink=False)
 
         main_vbox.pack_start(paned, True, True, 0)
 
@@ -246,31 +244,47 @@ class PDFConcatenatorApp(Gtk.Window):
         # Apply CSS styling
         self.apply_css()
 
+        print("[INFO] PDF Concatenator app initialized. Terminal will show debug messages.")
+
     def apply_css(self):
         css_provider = Gtk.CssProvider()
+        # KEY FIX: Make tiles VISIBLY distinct with borders and colors
         css_provider.load_from_data(b"""
             #drop_zone {
-                border: 3px dashed #999;
+                border: 3px dashed #6d4aff;
                 border-radius: 12px;
                 padding: 20px;
-                background-color: rgba(109, 76, 255, 0.05);
+                background-color: rgba(109, 76, 255, 0.1);
             }
             #drop_zone:hover {
-                background-color: rgba(109, 76, 255, 0.15);
+                background-color: rgba(109, 76, 255, 0.2);
                 border-color: #6d4aff;
             }
             .pdf-tile {
-                background-color: rgba(0,0,0,0.03);
-                border: 1px solid #ddd;
+                background-color: #ffffff;
+                border: 1px solid #6d4aff;
                 border-radius: 6px;
+                margin: 3px 0;
+                padding: 5px;
+                box-shadow: 0 1px 3px rgba(0,0,0,0.1);
             }
             .pdf-tile:hover {
-                background-color: rgba(109, 76, 255, 0.1);
+                background-color: #e8e8ff;
                 border-color: #6d4aff;
             }
             .tile-list {
-                background-color: rgba(255,255,255,0.95);
-                border-radius: 8px;
+                background-color: #fafafa;
+            }
+            .scroll-container {
+                border: 1px solid #ccc;
+            }
+            .suggested-action {
+                background-color: #6d4aff;
+                color: white;
+            }
+            .destructive-action {
+                background-color: #e74c3c;
+                color: white;
             }
         """)
         screen = Gdk.Screen.get_default()
@@ -282,17 +296,8 @@ class PDFConcatenatorApp(Gtk.Window):
         count = len(self.files)
         self.list_count_label.set_markup("<b>Added Files</b> <small>({})</small>".format(count))
 
-        # Show/hide empty placeholder
-        if count == 0:
-            # Switch back to placeholder
-            for child in self.file_list.get_children():
-                self.file_list.remove(child)
-            # The viewport contains the placeholder
-        else:
-            # Make sure placeholder is not shown
-            pass
-
     def on_drop(self, widget, context, x, y, selection_data, info, time):
+        print("[DEBUG] Drag-drop received!")
         data = selection_data.get_data()
         if not data:
             self.show_error("No data received in drop")
@@ -312,19 +317,22 @@ class PDFConcatenatorApp(Gtk.Window):
                 p = line[7:].replace('%20', ' ').replace('%2F', '/')
                 paths.append(p)
 
+        print(f"[DEBUG] Extracted {len(paths)} paths")
+
         if not paths:
             self.show_error("No file paths found")
             return
 
         added_count = 0
         skipped_count = 0
-        original_count = len(self.files)
 
         for path in paths:
             if path.endswith('.pdf') or '.pdf' in path.lower():
+                print(f"[DEBUG] Processing: {path}")
                 self.add_file_to_list(path, silent=True)
                 added_count += 1
             else:
+                print(f"[DEBUG] Skipping non-PDF: {path}")
                 skipped_count += 1
 
         # Update count label
@@ -332,13 +340,14 @@ class PDFConcatenatorApp(Gtk.Window):
 
         # Final status update with total count
         total_now = len(self.files)
-        self.update_status(f"{total_now} file{'s' if total_now != 1 else ''} in queue ({added_count} added)")
+        self.update_status(
+            "{} file{} in queue ({} added)".format(total_now, 's' if total_now != 1 else '', added_count))
 
         if skipped_count > 0:
-            self.show_info(f"Skipped {skipped_count} non-PDF file{'s' if skipped_count > 1 else ''}")
+            self.show_info("Skipped {} non-PDF file{}".format(skipped_count, 's' if skipped_count > 1 else ''))
 
     def add_file_to_list(self, path, silent=False):
-        """Add file to the list, optionally suppressing status updates"""
+        """Add file to the list"""
         is_valid, err = self.logic.validate_file(path)
         if not is_valid:
             if not silent:
@@ -359,7 +368,10 @@ class PDFConcatenatorApp(Gtk.Window):
         tile.connect("tile-remove", self.remove_tile)
         self.file_list.add(tile)
 
-        # Safe scrolling - check if parent exists
+        # FORCE SHOW the tile
+        tile.show_all()  # <-- ADD THIS
+
+        # Safe scrolling
         parent = self.file_list.get_parent()
         if parent:
             adj = parent.get_vadjustment()
@@ -367,34 +379,49 @@ class PDFConcatenatorApp(Gtk.Window):
                 adj.set_value(adj.get_upper())
 
         if not silent:
-            self.update_status(f"Added: {os.path.basename(path)}")
+            self.update_status("Added: {}".format(os.path.basename(path)))
         self.update_empty_state()
         return True
 
     def remove_tile(self, widget, tile):
-        if tile in self.file_list:
-            self.file_list.remove(tile)
-            if tile.file_path in self.files:
-                self.files.remove(tile.file_path)
-            self.reorder_indices()
-            self.update_empty_state()  # Add this
-            self.update_status("File removed")
+        print("[DEBUG] remove_tile called for: {}".format(os.path.basename(tile.file_path)))
 
-            # Show empty placeholder if no files left
-            if len(self.files) == 0:
-                for child in self.file_list.get_children():
-                    self.file_list.remove(child)
-                # Placeholder will be handled by container
+        # Remove from files list
+        if tile.file_path in self.files:
+            self.files.remove(tile.file_path)
+
+        # Find and remove the ListBoxRow containing the tile
+        for row in self.file_list.get_children():
+            if isinstance(row, Gtk.ListBoxRow):
+                child = row.get_child()
+                if child is tile or getattr(child, 'file_path', None) == tile.file_path:
+                    self.file_list.remove(row)
+                    print("[DEBUG] Removed row from listbox")
+                    break
+
+        # Reorder remaining tiles
+        self.reorder_indices()
+
+        # Update count and status
+        self.update_file_list_count()
+        self.update_status("File removed")
+
+        # Force redraw
+        self.file_list.queue_draw()
+        self.scroll_win.queue_draw()
+
+        print("[DEBUG] Remaining files: {}".format(len(self.files)))
 
     def reorder_indices(self):
         """Re-number the tiles after removal"""
         for i, row in enumerate(self.file_list):
             if isinstance(row, PDFTile):
-                row.idx_label.set_text(f"{i + 1}")
+                row.idx_label.set_text(str(i + 1))
                 row.index = i
 
     def on_browse_click(self, button=None, event=None):
         """Open file browser dialog"""
+        print("[DEBUG] Opening file browser...")
         chooser = Gtk.FileChooserDialog(
             title="Select PDF Files",
             parent=self,
@@ -412,11 +439,14 @@ class PDFConcatenatorApp(Gtk.Window):
 
         if response == Gtk.ResponseType.OK:
             filenames = chooser.get_filenames()
+            print("[DEBUG] Selected {} files".format(len(filenames)))
             for path in filenames:
                 self.add_file_to_list(path, silent=True)
             self.update_file_list_count()
             total = len(self.files)
-            self.update_status(f"{total} file{'s' if total != 1 else ''} in queue")
+            self.update_status("{} file{} in queue".format(total, 's' if total != 1 else ''))
+        else:
+            print("[DEBUG] File browser cancelled")
 
         chooser.destroy()  # Always destroy after run()
 
@@ -465,17 +495,17 @@ class PDFConcatenatorApp(Gtk.Window):
             if not output_path.endswith('.pdf'):
                 output_path += '.pdf'
 
-            self.update_status(f"Merging {len(self.files)} files...")
+            self.update_status("Merging {} files...".format(len(self.files)))
 
             # Run merge
             success, msg = self.logic.concat_pdfs(self.files, output_path)
 
             if success:
-                self.update_status(f"✓ Successfully saved to: {output_path}", success=True)
-                self.show_info(f"Merged {len(self.files)} files!\nSaved to:\n{output_path}")
+                self.update_status("✓ Successfully saved to: {}".format(output_path), success=True)
+                self.show_info("Merged {} files!\nSaved to:\n{}".format(len(self.files), output_path))
             else:
-                self.update_status(f"✗ {msg}", success=False)
-                self.show_error(f"Merge failed:\n{msg}")
+                self.update_status("✗ {}".format(msg), success=False)
+                self.show_error("Merge failed:\n{}".format(msg))
 
         chooser.destroy()
 
@@ -493,16 +523,12 @@ class PDFConcatenatorApp(Gtk.Window):
             color = "#2ecc71"
         else:
             color = "#e74c3c"
-        self.status_label.set_markup(f'<span foreground="{color}">{msg}</span>')
+        self.status_label.set_markup('<span foreground="{}">{}</span>'.format(color, msg))
 
     def update_empty_state(self):
         """Show/hide empty placeholder message"""
         count = len(self.file_list.get_children())
         self.list_count_label.set_markup("<b>Added Files</b> <small>({})</small>".format(count))
-
-        if count == 0:
-            # Optionally add a label at bottom of list
-            pass  # List is empty, nothing to show
 
     def show_error(self, msg):
         dialog = Gtk.MessageDialog(
