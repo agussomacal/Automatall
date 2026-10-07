@@ -171,6 +171,18 @@ class ProjectsManagerLogic:
                 subfolder_path.mkdir()
                 created_subfolders.append(subfolder)
 
+                # Special handling: create Article subfolders
+                if subfolder == "Article":
+                    article_subfolders = [
+                        "preprint",
+                        "reviews_answer",
+                        "reviews",
+                        "published_version"
+                    ]
+                    for article_sub in article_subfolders:
+                        (subfolder_path / article_sub).mkdir()
+                        created_subfolders.append(f"Article/{article_sub}")
+
             # Create project metadata file
             status = initial_status or self.settings.get("default_status", "developing")
             project_metadata = {
