@@ -8,6 +8,7 @@ sudo apt install python3-gi python3-gi-cairo gir1.2-gtk-3.0
 
 # Roadmap
 
+- APP: overleaf connector to local files and git.
 - APP: clean latex: find unused references/equations etc and change them.
 - APP: syncthin
 - APP: sanitize .bib files (check for published preprints; clean entries)

@@ -1,0 +1,19 @@
+# apps/projects_manager/config.yaml
+name: "Projects Manager"
+description: "Manage active and inactive projects and allows the creation of new projects following a predefined template"
+module: "app"
+icon: "./icon.png"
+enabled: true
+category: "science"
+type: "gui"
+version: "1.0"
+author: ""
+tags: ['science', 'tools', 'productivity']
+settings_file: "./settings.yaml"
+supported_statuses:
+  - "developing"
+  - "in_review"
+  - "answering_review"
+  - "preprint"
+  - "published"
+  - "inactive"

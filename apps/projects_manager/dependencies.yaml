@@ -1,0 +1,13 @@
+# apps/projects_manager/dependencies.yaml
+# Required dependencies for Projects Manager app
+
+dependencies:
+  - name: python3
+    binary: python3
+    description: "Python 3 runtime environment"
+    optional: false
+    install_commands:
+      apt: "sudo apt install -y python3"
+      dnf: "sudo dnf install -y python3"
+      brew: "brew install python3"
+    version_flag: "--version"
