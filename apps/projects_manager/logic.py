@@ -49,7 +49,16 @@ class ProjectsManagerLogic:
     ]
 
     def __init__(self, settings_file: str = None):
-        self.settings_file = Path(settings_file or "settings.yaml")
+        # Determine app directory (where logic.py lives)
+        self.app_dir = Path(__file__).parent.resolve()
+
+        if settings_file:
+            # Use provided path
+            self.settings_file = Path(settings_file)
+        else:
+            # Default to app directory
+            self.settings_file = self.app_dir / "settings.yaml"
+
         self.settings = self._load_settings()
         self.default_folder = Path(os.path.expanduser(
             self.settings.get("default_project_folder", "~/Documents/Projects")
@@ -74,10 +83,14 @@ class ProjectsManagerLogic:
     def _save_settings(self) -> bool:
         """Save settings to YAML file"""
         try:
+            # Ensure parent directory exists
+            self.settings_file.parent.mkdir(parents=True, exist_ok=True)
+
             with open(self.settings_file, 'w', encoding='utf-8') as f:
                 yaml.dump(self.settings, f, default_flow_style=False)
             return True
-        except Exception:
+        except Exception as e:
+            print(f"[ERROR] Failed to save settings: {e}")
             return False
 
     def get_setting(self, key: str, default=None):
