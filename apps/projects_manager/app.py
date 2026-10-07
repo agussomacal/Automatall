@@ -6,8 +6,6 @@ import gi
 gi.require_version('Gtk', '3.0')
 from gi.repository import Gtk, Gdk, GdkPixbuf, GLib, Pango, GObject
 import os
-import sys
-from pathlib import Path
 
 # Import local logic
 try:
@@ -28,8 +26,10 @@ class ProjectsManagerApp(Gtk.Window):
         # Initialize logic
         self.logic = ProjectsManagerLogic()
 
-        # Store current search query
-        self.current_search_query = ""
+        # Prevent reentrant refresh
+        self._refreshing = False
+        self._search_timeout = None
+        self.auto_refresh_timer = None
 
         # Main Layout
         main_vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -53,7 +53,6 @@ class ProjectsManagerApp(Gtk.Window):
         create_section = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
         create_section.set_spacing(10)
 
-        # Header for create section
         create_header = Gtk.Label()
         create_header.set_markup("<b>Create New Project</b>")
         create_header.set_halign(Gtk.Align.START)
@@ -159,18 +158,6 @@ class ProjectsManagerApp(Gtk.Window):
         projects_header.set_xalign(0)
         projects_section.pack_start(projects_header, False, False, 5)
 
-        # Search/filter
-        search_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-        search_box.set_spacing(5)
-
-        self.search_entry = Gtk.Entry()
-        self.search_entry.set_placeholder_text("Search projects...")
-        self.search_entry.set_hexpand(True)
-        self.search_entry.connect("changed", self.on_search_changed)
-
-        search_box.pack_start(self.search_entry, True, True, 0)
-        projects_section.pack_start(search_box, False, False, 0)
-
         # Projects list
         projects_scroll = Gtk.ScrolledWindow()
         projects_scroll.set_policy(Gtk.PolicyType.AUTOMATIC, Gtk.PolicyType.AUTOMATIC)
@@ -231,15 +218,16 @@ class ProjectsManagerApp(Gtk.Window):
         # Load existing projects
         self.refresh_projects()
 
-        # Start auto-refresh every 5 seconds
-        self.auto_refresh_timer = GLib.timeout_add_seconds(5, self.refresh_projects)
+        # Start auto-refresh every 10 seconds (slower to reduce churn)
+        self.auto_refresh_timer = GLib.timeout_add_seconds(10, self.refresh_projects)
 
         print("[INFO] Projects Manager app initialized with auto-refresh")
 
     def on_destroy(self, widget):
         """Cleanup on window close"""
-        if hasattr(self, 'auto_refresh_timer'):
+        if self.auto_refresh_timer:
             GLib.source_remove(self.auto_refresh_timer)
+            self.auto_refresh_timer = None
         Gtk.main_quit()
 
     def apply_css(self):
@@ -316,11 +304,9 @@ class ProjectsManagerApp(Gtk.Window):
         chooser.destroy()
 
     def on_drag_motion(self, widget, context, x, y, time):
-        """Accept drag motion on folder line"""
         return True
 
     def on_folder_drop(self, widget, context, x, y, selection_data, info, time):
-        """Handle folder drop on folder line"""
         data = selection_data.get_data()
         if not data:
             return
@@ -359,280 +345,251 @@ class ProjectsManagerApp(Gtk.Window):
         self.update_status("Creating project...")
         success, result = self.logic.create_project(name, folder, status)
 
+
         if success:
             self.update_status("✓ Project created successfully!", success=True)
             self.show_dialog(Gtk.MessageType.INFO, "Success", result)
             self.project_name.set_text("")
-            # Refresh immediately after creation
-            GLib.idle_add(self.refresh_projects)
+            # Force immediate refresh instead of scheduled
+            # GLib.idle_add(self.refresh_projects)
+            self.refresh_projects()
         else:
             self.update_status(f"✗ {result}", success=False)
             self.show_dialog(Gtk.MessageType.ERROR, "Failed", f"Failed to create project:\n{result}")
 
-        self.refresh_projects()
-
     def refresh_projects(self):
-        """Refresh the projects list - call this directly, returns False to stop timer"""
-        # Save current search query before refresh
-        saved_search = self.search_entry.get_text()
+        """Refresh the projects list - prevents reentrancy and handles errors safely"""
+        # Prevent concurrent refresh calls (CRITICAL!)
+        if getattr(self, '_refreshing', False):
+            print("[DEBUG] Refresh already in progress, skipping...")
+            return True
 
-        # Clear existing rows
-        # self.projects_list.foreach(lambda w: self.projects_list.remove(w))
+        self._refreshing = True
 
-        success, projects = self.logic.list_projects()
-        if not success or projects is None:
-            self.update_status("Error loading projects", success=False)
-            # Restore search if exists
-            if saved_search:
-                self.search_entry.set_text(saved_search)
-            return True  # Continue timer
-
-        if not projects:
-            no_projects = Gtk.Label()
-            no_projects.set_markup("<i>No projects found</i>")
-            no_projects.set_sensitive(False)
-            no_projects.set_margin_top(50)
-            no_projects.set_halign(Gtk.Align.CENTER)
-            self.projects_list.add(no_projects)
-            self.update_status("No projects found")
-            return True  # Continue timer
-
-        for project in projects:
-            row = Gtk.ListBoxRow()
-            row.set_selectable(False)
-            row.set_activatable(True)
-
-            hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
-            hbox.set_spacing(15)
-            hbox.set_margin_start(10)
-            hbox.set_margin_end(10)
-            hbox.set_margin_top(8)
-            hbox.set_margin_bottom(8)
-            hbox.set_hexpand(True)
-
-            # Store project name on row for access later
-            row.project_name = project["name"]
-
-            # Status indicator
-            status = project.get("status", "developing")
-            status_color = self.logic.STATUS_COLORS.get(status, "#95a5a6")
-            status_label_display = self.logic.STATUS_LABELS.get(status, status).replace("_", " ").title()
-
-            status_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            status_box.set_spacing(2)
-            status_box.set_size_request(80, -1)
-
-            status_indicator = Gtk.Label(label="●")
-            status_indicator.set_markup(f'<span foreground="{status_color}" size="x-large">●</span>')
-            status_box.pack_start(status_indicator, False, False, 0)
-
-            status_lbl = Gtk.Label(label=status_label_display)
-            status_lbl.set_markup(f'<span foreground="{status_color}"><small>{status_label_display}</small></span>')
-            status_lbl.set_justify(Gtk.Justification.LEFT)
-            status_lbl.set_halign(Gtk.Align.START)
-            status_box.pack_start(status_lbl, False, False, 0)
-
-            hbox.pack_start(status_box, False, False, 0)
-
-            # Project info
-            info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            info_box.set_spacing(2)
-            info_box.set_hexpand(True)
-            info_box.set_valign(Gtk.Align.CENTER)
-
-            name_label = Gtk.Label(label=project["name"])
-            name_label.set_halign(Gtk.Align.START)
-            name_label.set_xalign(0)
-            name_label.set_markup(f'<b>{project["name"]}</b>')
-            info_box.pack_start(name_label, False, False, 0)
-
-            path_label = Gtk.Label(label=project["path"])
-            path_label.set_halign(Gtk.Align.START)
-            path_label.set_xalign(0)
-            path_label.set_sensitive(False)
-            path_label.set_ellipsize(Pango.EllipsizeMode.END)
-            path_label.set_markup(f'<small>{os.path.basename(project["path"])}</small>')
-            info_box.pack_start(path_label, False, False, 0)
-
-            hbox.pack_start(info_box, True, True, 0)
-
-            # Action buttons
-            action_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-            action_box.set_spacing(5)
-            action_box.set_halign(Gtk.Align.END)
-
-            # Go to Project button
-            go_btn = Gtk.Button(label="📂 Go to Project")
-            go_btn.set_size_request(130, 35)
-            go_btn.get_style_context().add_class("suggested-action")
-
-            def on_go_clicked(btn, proj_path=project["path"]):
-                try:
-                    os.system(f"xdg-open '{proj_path}'")
-                except Exception as e:
-                    self.show_dialog(Gtk.MessageType.ERROR, "Error", f"Cannot open folder: {e}")
-
-            go_btn.connect("clicked", on_go_clicked)
-            action_box.pack_start(go_btn, False, False, 0)
-
-            # Store references for status update
-            row.status_indicator = status_indicator
-            row.status_lbl = status_lbl
-            row.status_box = status_box
-
-            # Status change dropdown
-            status_combo = Gtk.ComboBoxText()
-            for s in self.logic.VALID_STATUSES:
-                label = self.logic.STATUS_LABELS.get(s, s).replace("_", " ").title()
-                status_combo.append_text(label)
-            status_combo.set_active_id(status_label_display)
-            status_combo.set_size_request(150, -1)
-
-            proj_name_capture = project["name"]
-
-            def on_status_changed(combo, proj_name=proj_name_capture, sr=row.status_indicator, sl=row.status_lbl,
-                                  rc=row):
-                new_status_text = combo.get_active_text()
-                if not new_status_text:
-                    return
-
-                new_status = new_status_text.lower().replace(" ", "_")
-                success, msg = self.logic.update_project_status(proj_name, new_status)
-
-                if success:
-                    self.update_status(f"Updated {proj_name} to {msg}", success=True)
-
-                    new_status_color = self.logic.STATUS_COLORS.get(new_status, "#95a5a6")
-                    new_status_label = self.logic.STATUS_LABELS.get(new_status, new_status).replace("_", " ").title()
-
-                    sr.set_markup(f'<span foreground="{new_status_color}" size="x-large">●</span>')
-                    sl.set_markup(f'<span foreground="{new_status_color}"><small>{new_status_label}</small></span>')
-
-                    old_context = rc.get_style_context()
-                    for old_status in self.logic.VALID_STATUSES:
-                        old_context.remove_class(f"status-{old_status}")
-                    old_context.add_class(f"status-{new_status}")
-
-                    # Don't clear search here - it breaks visibility
-                else:
-                    self.show_dialog(Gtk.MessageType.ERROR, "Error", msg)
-
-            status_combo.connect("changed", on_status_changed)
-            action_box.pack_start(status_combo, False, False, 0)
-
-            # Delete button
-            delete_btn = Gtk.Button(label="Delete")
-            delete_btn.get_style_context().add_class("destructive-action")
-            delete_btn.set_size_request(130, 35)
-
-            def on_delete_clicked(btn, proj_name=project["name"]):
-                dialog = Gtk.MessageDialog(
-                    transient_for=self,
-                    flags=0,
-                    message_type=Gtk.MessageType.WARNING,
-                    buttons=Gtk.ButtonsType.YES_NO,
-                    text=f"Delete project '{proj_name}'?"
-                )
-                dialog.format_secondary_text("This will permanently delete all project files.")
-
-                response = dialog.run()
-                if response == Gtk.ResponseType.YES:
-                    success, msg = self.logic.delete_project(proj_name)
-                    if success:
-                        self.update_status(msg, success=True)
-                        GLib.idle_add(self.refresh_projects)
-                    else:
-                        self.show_dialog(Gtk.MessageType.ERROR, "Error", msg)
-
-                dialog.destroy()
-
-            delete_btn.connect("clicked", on_delete_clicked)
-            action_box.pack_start(delete_btn, False, False, 0)
-
-            hbox.pack_start(action_box, False, False, 0)
-
-            row.add(hbox)
-            row.get_style_context().add_class(f"status-{status}")
-            self.projects_list.add(row)
-
-        # Restore search filter after all rows are added
-        if saved_search:
-            self.search_entry.set_text(saved_search)
-
-        self.update_status(f"Loaded {len(projects)} project(s)")
-
-        return True  # Continue auto-refresh timer
-
-    def on_project_activated(self, listbox, row):
-        """Handle double-click on project row"""
-        if hasattr(row, 'project_name'):
-            proj_name = row.project_name
+        try:
+            # Fetch projects BEFORE touching UI
             success, projects = self.logic.list_projects()
-            if success:
-                for proj in projects:
-                    if proj["name"] == proj_name:
-                        os.system(f"xdg-open '{proj['path']}'")
-                        break
+
+            if not success or projects is None:
+                print("[ERROR] Failed to load projects from disk")
+                self.update_status("Error loading projects", success=False)
+                return True  # Keep timer running
+
+            # Clear existing rows safely
+            rows_to_remove = list(self.projects_list)
+            for row in rows_to_remove:
+                self.projects_list.remove(row)
+
+            # Handle empty list
+            if not projects:
+
+                no_projects = Gtk.Label()
+                no_projects.set_markup("<i>No projects found</i>")
+                no_projects.set_sensitive(False)
+                no_projects.set_margin_top(50)
+                no_projects.set_halign(Gtk.Align.CENTER)
+                self.projects_list.add(no_projects)
+                no_projects.show_all()
+                return True
+
+            # Build rows for all projects
+            for project in projects:
+                row = Gtk.ListBoxRow()
+                row.set_selectable(False)
+                row.set_activatable(True)
+
+                # Horizontal layout
+                hbox = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+                hbox.set_spacing(15)
+                hbox.set_margin_start(10)
+                hbox.set_margin_end(10)
+                hbox.set_margin_top(8)
+                hbox.set_margin_bottom(8)
+                hbox.set_hexpand(True)
+
+                # Status indicator
+                status = project.get("status", "developing")
+                status_color = self.logic.STATUS_COLORS.get(status, "#95a5a6")
+                status_label_display = self.logic.STATUS_LABELS.get(status, status).replace("_", " ").title()
+
+                status_indicator = Gtk.Label()
+                status_indicator.set_markup(f'<span foreground="{status_color}" size="xx-large">●</span>')
+                status_indicator.set_halign(Gtk.Align.CENTER)
+
+                status_lbl = Gtk.Label()
+                status_lbl.set_markup(f'<span foreground="{status_color}"><small>{status_label_display}</small></span>')
+                status_lbl.set_halign(Gtk.Align.START)
+
+                status_col = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+                status_col.set_spacing(0)
+                status_col.pack_start(status_indicator, False, False, 0)
+                status_col.pack_start(status_lbl, False, False, 0)
+
+                hbox.pack_start(status_col, False, False, 0)
+
+                # Project name and path
+                info_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+                info_box.set_spacing(2)
+                info_box.set_hexpand(True)
+
+                name_label = Gtk.Label()
+                name_label.set_markup(f'<b>{project["name"]}</b>')
+                name_label.set_halign(Gtk.Align.START)
+                info_box.pack_start(name_label, False, False, 0)
+
+                path_label = Gtk.Label()
+                path_label.set_markup(f'<small>{os.path.basename(project["path"])}</small>')
+                path_label.set_halign(Gtk.Align.START)
+                path_label.set_sensitive(False)
+                path_label.set_ellipsize(Pango.EllipsizeMode.END)
+                info_box.pack_start(path_label, False, False, 0)
+
+                hbox.pack_start(info_box, True, True, 0)
+
+                # Action buttons
+                action_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+                action_box.set_spacing(5)
+                action_box.set_halign(Gtk.Align.END)
+
+                # Go to Project button
+                go_btn = Gtk.Button(label="📂 Open")
+                go_btn.set_size_request(100, 35)
+                go_btn.get_style_context().add_class("suggested-action")
+                go_btn.connect("clicked", lambda btn, p=project["path"]: os.system(f"xdg-open '{p}'"))
+                action_box.pack_start(go_btn, False, False, 0)
+
+                # Status dropdown
+                status_combo = Gtk.ComboBoxText()
+                for s in self.logic.VALID_STATUSES:
+                    label = self.logic.STATUS_LABELS.get(s, s).replace("_", " ").title()
+                    status_combo.append_text(label)
+                status_combo.set_active_id(status_label_display)
+                status_combo.set_size_request(140, -1)
+
+                def make_status_handler(name, row_ref):
+                    def handler(combo):
+                        new_text = combo.get_active_text()
+                        if not new_text:
+                            return
+                        new_status = new_text.lower().replace(" ", "_")
+                        ok, msg = self.logic.update_project_status(name, new_status)
+                        if ok:
+                            self.update_status(f"{name}: {msg}", success=True)
+                            new_color = self.logic.STATUS_COLORS.get(new_status, "#95a5a6")
+                            new_label = self.logic.STATUS_LABELS.get(new_status, new_status).replace("_", " ").title()
+                            row_ref.status_indicator.set_markup(
+                                f'<span foreground="{new_color}" size="xx-large">●</span>')
+                            row_ref.status_lbl.set_markup(
+                                f'<span foreground="{new_color}"><small>{new_label}</small></span>')
+                            ctx = row_ref.get_style_context()
+                            for old in self.logic.VALID_STATUSES:
+                                ctx.remove_class(f"status-{old}")
+                            ctx.add_class(f"status-{new_status}")
+
+                    return handler
+
+                status_combo.connect("changed", make_status_handler(project["name"], row))
+                action_box.pack_start(status_combo, False, False, 0)
+
+                hbox.pack_start(action_box, False, False, 0)
+
+                row.add(hbox)
+                row.get_style_context().add_class(f"status-{status}")
+                row.status_indicator = status_indicator
+                row.status_lbl = status_lbl
+
+                self.projects_list.add(row)
+                row.show_all()
+
+            # self.projects_list = set(self.projects_list)
+            self.update_status(f"Loaded {len(projects)} project(s)")
+
+        except Exception as e:
+            print(f"[ERROR] Exception in refresh_projects: {e}")
+            import traceback
+            traceback.print_exc()
+            self.update_status(f"Refresh failed: {str(e)}", success=False)
+
+        finally:
+            # Always reset the flag, even on error
+            self._refreshing = False
+
+        return True  # Keep timer running
 
     def on_search_changed(self, entry):
-        """Filter projects based on search query"""
-        self.current_search_query = entry.get_text().lower()
+        """Debounced search - rebuilds list with filter"""
+        # Cancel pending timeout
+        if self._search_timeout:
+            GLib.source_remove(self._search_timeout)
 
-        for row in self.projects_list:
-            try:
-                if not isinstance(row, Gtk.ListBoxRow):
-                    continue
+        # Schedule rebuild after 300ms
+        self._search_timeout = GLib.timeout_add(300, self.refresh_projects)
 
-                children = row.get_children()
-                if not children or len(children) < 3:
-                    # Placeholder row - always show if no search
-                    row.set_visible(not self.current_search_query)
-                    continue
-
-                info_box = children[1]
-                children_in_info = info_box.get_children()
-                if not children_in_info:
-                    row.set_visible(not self.current_search_query)
-                    continue
-
-                name_label = children_in_info[0]
-                name = name_label.get_text().lower()
-
-                row.set_visible(self.current_search_query in name)
-            except Exception:
-                row.set_visible(False)
+    def on_project_activated(self, listbox, row):
+        """Double-click opens project folder"""
+        if hasattr(row, 'project_path'):
+            os.system(f"xdg-open '{row.project_path}'")
 
     def on_settings(self, button):
-        """Open settings dialog"""
-        dialog = Gtk.MessageDialog(
-            transient_for=self,
-            flags=0,
-            message_type=Gtk.MessageType.INFO,
-            buttons=Gtk.ButtonsType.OK,
-            text="Settings"
-        )
+        """Open settings dialog with folder drag-and-drop support"""
+        dialog = Gtk.Window(type=Gtk.WindowType.TOPLEVEL)  # Fixed: was TOPPLevel
+        dialog.set_title("Settings")
+        dialog.set_transient_for(self)
+        dialog.set_modal(True)
+        dialog.set_default_size(500, 200)
+        dialog.set_border_width(15)
 
-        content = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        content.set_spacing(15)
-        content.set_border_width(15)
-        dialog.get_content_area().pack_start(content, True, True, 0)
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        vbox.set_spacing(15)
+        dialog.add(vbox)
 
-        folder_label = Gtk.Label(label="Default Projects Folder:")
-        folder_label.set_halign(Gtk.Align.START)
-        content.pack_start(folder_label, False, False, 5)
+        # Default folder section
+        folder_frame = Gtk.Frame(label="Default Projects Folder")
+        folder_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        folder_box.set_spacing(10)
+        folder_box.set_border_width(10)
+        folder_frame.add(folder_box)
 
-        default_entry = Gtk.Entry()
-        default_entry.set_text(str(self.logic.default_folder))
-        default_entry.set_hexpand(True)
-        content.pack_start(default_entry, False, False, 0)
+        # Folder entry (editable)
+        folder_input_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        folder_input_box.set_spacing(10)
+
+        self.settings_folder_entry = Gtk.Entry()
+        self.settings_folder_entry.set_text(str(self.logic.default_folder))
+        self.settings_folder_entry.set_hexpand(True)
+        self.settings_folder_entry.connect("changed", self.on_settings_folder_changed)
 
         browse_btn = Gtk.Button(label="Browse...")
-        browse_btn.connect("clicked", self.on_settings_browse, default_entry)
-        content.pack_start(browse_btn, False, False, 0)
+        browse_btn.connect("clicked", self.on_settings_browse, self.settings_folder_entry)
 
-        status_label = Gtk.Label(label="Default Project Status:")
-        status_label.set_halign(Gtk.Align.START)
-        content.pack_start(status_label, False, False, 10)
+        folder_input_box.pack_start(self.settings_folder_entry, True, True, 0)
+        folder_input_box.pack_start(browse_btn, False, False, 0)
+        folder_box.pack_start(folder_input_box, False, False, 0)
+
+        # Drag and drop zone for folder
+        drop_eventbox = Gtk.EventBox()
+        drop_label = Gtk.Label()
+        drop_label.set_markup("<small>Drag & drop a folder here or type path above</small>")
+        drop_label.set_halign(Gtk.Align.CENTER)
+        drop_label.set_sensitive(False)
+        drop_eventbox.add(drop_label)
+        drop_eventbox.set_visible_window(False)
+
+        # Enable drag-and-drop
+        targets = [Gtk.TargetEntry.new("text/uri-list", 0, 0)]
+        drop_eventbox.drag_dest_set(Gtk.DestDefaults.ALL, targets, Gdk.DragAction.COPY)
+        drop_eventbox.connect("drag-data-received", self.on_settings_folder_drop, self.settings_folder_entry)
+        drop_eventbox.connect("drag-motion", self.on_drag_motion)
+
+        folder_box.pack_start(drop_eventbox, False, False, 0)
+        folder_box.pack_start(Gtk.Separator(orientation=Gtk.Orientation.HORIZONTAL), False, False, 0)
+
+        # Default status section
+        status_frame = Gtk.Frame(label="Default Project Status")
+        status_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
+        status_box.set_spacing(10)
+        status_box.set_border_width(10)
+        status_frame.add(status_box)
 
         default_status_combo = Gtk.ComboBoxText()
         for status in self.logic.VALID_STATUSES:
@@ -641,24 +598,36 @@ class ProjectsManagerApp(Gtk.Window):
 
         current_default = self.logic.settings.get("default_status", "developing")
         default_status_combo.set_active_id(current_default.replace("_", " ").title())
-        content.pack_start(default_status_combo, False, False, 0)
+        status_box.pack_start(default_status_combo, False, False, 0)
 
-        dialog.resize(400, 200)
+        vbox.pack_start(folder_frame, False, False, 0)
+        vbox.pack_start(status_frame, False, False, 0)
 
-        if dialog.run() == Gtk.ResponseType.OK:
-            new_folder = default_entry.get_text()
-            is_valid, msg = self.logic.set_default_folder(new_folder)
-            if not is_valid:
-                self.show_dialog(Gtk.MessageType.ERROR, "Invalid Folder", msg)
+        # Button box
+        btn_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL)
+        btn_box.set_spacing(10)
+        btn_box.set_halign(Gtk.Align.END)
 
-            new_default_status = default_status_combo.get_active_text()
-            if new_default_status:
-                new_default_status_code = new_default_status.lower().replace(" ", "_")
-                self.logic.set_setting("default_status", new_default_status_code)
-                self.update_status("Settings saved", success=True)
-                GLib.idle_add(self.refresh_projects)
+        cancel_btn = Gtk.Button(label="Cancel")
+        cancel_btn.connect("clicked", lambda x: dialog.destroy())
+        btn_box.pack_start(cancel_btn, False, False, 0)
 
-        dialog.destroy()
+        save_btn = Gtk.Button(label="Save")
+        save_btn.get_style_context().add_class("suggested-action")
+        save_btn.connect("clicked", self.on_settings_save, default_status_combo)
+        btn_box.pack_start(save_btn, False, False, 0)
+
+        vbox.pack_start(btn_box, False, False, 0)
+
+        dialog.show_all()
+
+    def on_settings_folder_changed(self, entry):
+        """Validate folder path in real-time"""
+        folder = entry.get_text()
+        if folder and os.path.isdir(folder):
+            entry.override_color(Gtk.StateFlags.NORMAL, Gdk.RGBA.parse("#2ecc71"))
+        else:
+            entry.override_color(Gtk.StateFlags.NORMAL, Gdk.RGBA.parse("#666"))
 
     def on_settings_browse(self, button, entry):
         """Browse folder from settings dialog"""
@@ -679,8 +648,50 @@ class ProjectsManagerApp(Gtk.Window):
 
         chooser.destroy()
 
+    def on_settings_folder_drop(self, widget, context, x, y, selection_data, info, time, entry):
+        """Handle folder drop on settings dialog"""
+        data = selection_data.get_data()
+        if not data:
+            return
+
+        try:
+            text = data.decode('utf-8')
+        except:
+            return
+
+        for line in text.split('\n'):
+            line = line.strip()
+            if line.startswith('file://'):
+                path = line[7:].replace('%20', ' ')
+                if os.path.isdir(path):
+                    entry.set_text(path)
+                    entry.override_color(Gtk.StateFlags.NORMAL, Gdk.RGBA.parse("#2ecc71"))
+                    break
+
+    def on_settings_save(self, button, status_combo):
+        """Save settings from dialog"""
+        # Save folder
+        new_folder = self.settings_folder_entry.get_text()
+        is_valid, msg = self.logic.set_default_folder(new_folder)
+        if not is_valid:
+            self.show_dialog(Gtk.MessageType.ERROR, "Invalid Folder", msg)
+            return
+
+        # Save status
+        new_default_status = status_combo.get_active_text()
+        if new_default_status:
+            new_default_status_code = new_default_status.lower().replace(" ", "_")
+            self.logic.set_setting("default_status", new_default_status_code)
+
+        # Update the target folder in the create section
+        self.target_folder.set_text(new_folder)
+        self.target_folder.set_placeholder_text(new_folder)
+
+        self.update_status("Settings saved", success=True)
+        self.refresh_projects()
+        button.get_toplevel().destroy()
+
     def on_export_list(self, button):
-        """Export project list to JSON"""
         chooser = Gtk.FileChooserDialog(
             title="Save Project List",
             parent=self,
@@ -707,7 +718,6 @@ class ProjectsManagerApp(Gtk.Window):
         chooser.destroy()
 
     def update_status(self, msg, success=None):
-        """Update status bar"""
         if success is None:
             color = "#666"
         elif success:
@@ -717,11 +727,9 @@ class ProjectsManagerApp(Gtk.Window):
         self.status_label.set_markup(f'<span foreground="{color}">{msg}</span>')
 
     def show_error(self, msg):
-        """Show error dialog"""
         self.show_dialog(Gtk.MessageType.ERROR, "Error", msg)
 
     def show_dialog(self, msg_type, title, msg):
-        """Generic dialog display"""
         dialog = Gtk.MessageDialog(
             transient_for=self,
             flags=0,
@@ -735,7 +743,6 @@ class ProjectsManagerApp(Gtk.Window):
 
 
 def launch():
-    """Launch the application"""
     app = ProjectsManagerApp()
     app.show_all()
     Gtk.main()

@@ -13,21 +13,21 @@ class ProjectsManagerLogic:
     """Handles project folder creation, management and status tracking"""
 
     VALID_STATUSES = [
+        "inactive",
         "developing",
+        "preprint",
         "in_review",
         "answering_review",
-        "preprint",
         "published",
-        "inactive"
     ]
 
     STATUS_LABELS = {
+        "inactive": "Inactive",
         "developing": "Developing",
+        "preprint": "Preprint",
         "in_review": "In Review",
         "answering_review": "Answering Review",
-        "preprint": "Preprint",
         "published": "Published",
-        "inactive": "Inactive"
     }
 
     STATUS_COLORS = {
