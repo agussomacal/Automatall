@@ -1,0 +1,11 @@
+# apps/sync_master/config.yaml
+name: "Sync Master"
+description: "App to syncronize chosen folders between devices using USB connection."
+module: "app"
+icon: "./icon.png"
+enabled: true
+category: "tools"
+type: "gui"
+version: "1.0"
+author: ""
+tags: ['sync']

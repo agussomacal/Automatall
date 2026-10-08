@@ -1,0 +1,51 @@
+# microApps/NoServerSync/dependencies.yaml
+# Required dependencies for NoServerSync folder synchronization app
+
+dependencies:
+  # GTK4 GUI framework
+  - name: gtk4
+    binary: g++
+    description: "GTK 4 graphical toolkit"
+    optional: false
+    install_commands:
+      apt: "sudo apt install -y libgtk-4-1 gir1.2-gtk-4.0 libgtk-4-dev"
+      dnf: "sudo dnf install -y gtk4 gtk4-devel"
+      pacman: "sudo pacman -S gtk4"
+      brew: "brew install gtk4"
+    version_flag: "--version"
+
+  # Libadwaita for modern GNOME desktop styling
+  - name: libadwaita
+    binary: adw-1
+    description: "GNOME Libadwaita for modern widget styling"
+    optional: false
+    install_commands:
+      apt: "sudo apt install -y libadwaita-1-0 gir1.2-adw-1 libadwaita-1-dev"
+      dnf: "sudo dnf install -y libadwaita libadwaita-devel"
+      pacman: "sudo pacman -S libadwaita"
+      brew: "brew install libadwaita"
+    version_flag: "--version"
+
+  # PyYAML for config parsing
+  - name: python-pyyaml
+    binary: python3
+    description: "YAML configuration parser"
+    optional: false
+    install_commands:
+      apt: "pip3 install pyyaml"
+      dnf: "pip3 install pyyaml"
+      pacman: "pip3 install pyyaml"
+      brew: "pip3 install pyyaml"
+    version_flag: "-c pyyaml | grep -oP 'Version: \\K[\\d.]+'"
+
+  # tqdm for progress bars (used in synclib)
+  - name: python-tqdm
+    binary: python3
+    description: "Progress bar library for sync operations"
+    optional: false
+    install_commands:
+      apt: "pip3 install tqdm"
+      dnf: "pip3 install tqdm"
+      pacman: "pip3 install tqdm"
+      brew: "pip3 install tqdm"
+    version_flag: "-c tqdm | grep -oP 'Version: \\K[\\d.]+'"
