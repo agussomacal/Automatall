@@ -1,0 +1,36 @@
+/* Duplicate Finder CSS Styles */
+
+.drop-zone {
+    border: 3px dashed #6d4aff;
+    border-radius: 12px;
+    background-color: rgba(109, 76, 255, 0.1);
+}
+
+.drop-zone:hover {
+    background-color: rgba(109, 76, 255, 0.2);
+    border-color: #6d4aff;
+}
+
+.keep-tile {
+    background-color: #e8f5e9;
+    border: 1px solid #2ecc71;
+    border-radius: 6px;
+    padding: 5px;
+    margin: 3px 0;
+}
+
+.delete-tile {
+    background-color: #fce4ec;
+    border: 1px solid #e74c3c;
+    border-radius: 6px;
+    padding: 5px;
+    margin: 3px 0;
+}
+
+.keep-list {
+    background-color: rgba(46, 204, 113, 0.1);
+}
+
+.delete-list {
+    background-color: rgba(231, 76, 60, 0.1);
+}

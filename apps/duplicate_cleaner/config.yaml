@@ -1,0 +1,11 @@
+# apps/duplicate_cleaner/config.yaml
+name: "Duplicate Cleaner"
+description: "Finds duplicate files in a folder and cleans the extra ones."
+module: "app"
+icon: "./icon.png"
+enabled: true
+category: "files"
+type: "gui"
+version: "1.0"
+author: ""
+tags: ['files']
