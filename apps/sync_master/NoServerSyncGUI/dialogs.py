@@ -90,7 +90,6 @@ class AddFolderDialog(Adw.MessageDialog):
     """Maps to cmd_frontend.add_folder / synclib.add_tracking_to_folder."""
 
     def __init__(self, parent, device_name, config):
-        # Get device's mount path
         try:
             device_config = config[CONFIG_DEVICES_KEY_NAME][device_name]
             base_path = device_config["path"]
@@ -106,14 +105,13 @@ class AddFolderDialog(Adw.MessageDialog):
         self.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
 
         self.device_name = device_name
-        self.base_path = base_path  # Store for validation
+        self.base_path = base_path
 
         form = Adw.PreferencesGroup()
 
-        # Path entry with device base path as default
         self.path_entry = Adw.EntryRow(
             title="Absolute path to folder",
-            text=base_path  # Default to device's mount path
+            text=base_path
         )
 
         browse = Gtk.Button(icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER)
@@ -130,17 +128,16 @@ class AddFolderDialog(Adw.MessageDialog):
         self.ignfe_entry = Adw.EntryRow(title="Ignored file endings (space-separated)")
         self.ignored_entry = Adw.EntryRow(title="Ignored paths (space-separated, ex: '.git logseq/bak')")
 
+        # REMOVED: Icon dropdown
         for w in (self.path_entry, dir_row, self.append_entry,
                   self.only_entry, self.ignfe_entry, self.ignored_entry):
             form.add(w)
         self.set_extra_child(form)
 
-        # Wire live validation
         self.path_entry.connect("changed", lambda *_: self._validate())
         self._validate()
 
     def _browse(self, *_):
-        """Open file chooser starting at the device's mount path."""
         dlg = Gtk.FileChooserNative(
             transient_for=self,
             action=Gtk.FileChooserAction.SELECT_FOLDER,
@@ -149,13 +146,12 @@ class AddFolderDialog(Adw.MessageDialog):
             cancel_label="Cancel"
         )
 
-        # Set current folder to device's base path if it exists
         if os.path.exists(self.base_path):
             try:
                 file = Gio.File.new_for_path(self.base_path)
                 dlg.set_current_folder(file, None)
             except:
-                pass  # If it fails, just use default
+                pass
 
         dlg.connect("response", self._folder_chosen)
         dlg.show()
@@ -164,9 +160,7 @@ class AddFolderDialog(Adw.MessageDialog):
         if resp == Gtk.ResponseType.ACCEPT and dlg.get_file():
             selected_path = dlg.get_file().get_path()
 
-            # Validate: folder must be within device's base path
             if not selected_path.startswith(self.base_path):
-                # Show error dialog
                 err_dlg = Adw.MessageDialog(
                     transient_for=self,
                     heading="Invalid Path",
@@ -177,7 +171,6 @@ class AddFolderDialog(Adw.MessageDialog):
                 dlg.destroy()
                 return
 
-            # Valid path, set it
             self.path_entry.set_text(selected_path)
 
         dlg.destroy()
@@ -186,25 +179,20 @@ class AddFolderDialog(Adw.MessageDialog):
         return [t for t in entry.get_text().strip().split(" ") if t]
 
     def _validate(self):
-        """Validate path exists and is within device's base path."""
         path = self.path_entry.get_text().strip()
 
-        # Empty path
         if not path:
             self.set_response_enabled("ok", False)
             return
 
-        # Path must exist
         if not os.path.exists(path):
             self.set_response_enabled("ok", False)
             return
 
-        # Path must be a directory
         if not os.path.isdir(path):
             self.set_response_enabled("ok", False)
             return
 
-        # CRITICAL: Path must be within device's base path (security check)
         try:
             real_base = os.path.realpath(self.base_path)
             real_path = os.path.realpath(path)
@@ -217,7 +205,6 @@ class AddFolderDialog(Adw.MessageDialog):
             self.set_response_enabled("ok", False)
             return
 
-        # All validations passed
         self.set_response_enabled("ok", True)
 
     def get_values(self):

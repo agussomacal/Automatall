@@ -8,6 +8,8 @@ import sys
 from contextlib import redirect_stdout
 from pathlib import Path
 
+from apps.sync_master.NoServerSync.synclib import CONFIG_FOLDERS_KEY_NAME
+
 # Ensure the original NoServerSync module is importable
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -58,17 +60,24 @@ def load_config():
 
 
 def list_devices(config) -> list:
+    """List all devices with their types and connection status."""
     main = get_main_device(config)
     rows = []
+
     for name, dev in config[CONFIG_DEVICES_KEY_NAME].items():
         connected = Path(dev["path"]).exists()
+
+        # INCLUDE device_type in the returned data!
         rows.append({
             "name": name,
             "subtitle": f"{dev['type']} — {dev['path']}",
             "connected": connected,
             "is_main": name == main,
+            "type": dev.get("type", "COMPUTER"),  # ← CRITICAL: Add this line!
             "badge": "main" if name == main else ("online" if connected else "offline"),
         })
+
+    print(f"[BACKEND] list_devices() returning {len(rows)} devices")
     return rows
 
 
@@ -119,7 +128,7 @@ def add_device(config, device_name, mount_path, device_type, device_direction, s
 
 
 def add_folder(config, device_name, path, direction, append_strategy_to_file_endings,
-               folder_settings):
+               folder_settings, icon=None):
     """Add a folder tracking and persist to disk."""
     print(f"[BACKEND] add_folder() called with: device={device_name}, path={path}")
 
@@ -139,6 +148,10 @@ def add_folder(config, device_name, path, direction, append_strategy_to_file_end
     print(f"[BACKEND] add_folder() tracking returned msg={msg}")
 
     folder = path.rstrip("/").split("/")[-1]
+
+    if icon:
+        config[CONFIG_FOLDERS_KEY_NAME][folder]["icon"] = icon
+        print(f"[BACKEND] Set folder '{folder}' icon to: {icon}")
 
     for setting in FOLDER_SETTINGS:
         vals = folder_settings.get(setting, [])
@@ -267,11 +280,15 @@ def list_folders(config, device_names) -> list:
                       "direction": "mixed" if len(directions) > 1 else list(directions)[0]}
             badge = f"{len(connected_devs)}/{len(device_infos)} online"
 
+        folder_config = config.get("tracked_folders", {}).get(folder_name, {})
+        folder_icon = folder_config.get("icon", "folder")  # Default to "folder"
+
         row = {
             "name": folder_name,
             "subtitle": subtitle,
             "detail": detail,
             "badge": badge,
+            "icon": folder_icon,  # NEW: Include icon in row data
             "devices": device_infos,  # Store for later use if needed
         }
 

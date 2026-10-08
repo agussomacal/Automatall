@@ -134,25 +134,52 @@ class MainWindow(Gtk.ApplicationWindow):
         from . import backend
         rows = backend.list_devices(self.get_config())
         print(f"[MAIN_WINDOW] refresh_devices() - Showing {len(rows)} devices")
-        self._fill_list(self.devices_list, rows)
+        self._fill_list_devices(self.devices_list, rows)
 
-    def _fill_list(self, listbox, rows):
+    def refresh_folders(self):
+        from . import backend
+        devices = backend.list_devices(self.get_config())
+        names = [d["name"] for d in devices]
+        rows = backend.list_folders(self.get_config(), names)
+        print(f"[MAIN_WINDOW] refresh_folders() - Showing {len(rows)} folders")
+        self._fill_list_folders(self.folders_list, rows)
+
+    # ============================================================
+    # Device list WITH icons
+    # ============================================================
+    def _fill_list_devices(self, listbox, rows):
         self._clear_listbox(listbox)
         for row_data in rows:
             box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
                           margin_top=6, margin_bottom=6)
             line = Gtk.Box(spacing=6)
-            icon_name = "computer-symbolic" if row_data.get("connected") else "media-removable-symbolic"
+
+            # Choose icon based on device type
+            device_type = row_data.get("type", "COMPUTER")
+            connected = row_data.get("connected", False)
+
+            if device_type == "COMPUTER":
+                icon_name = "computer-symbolic"
+            elif device_type == "USB":
+                icon_name = "media-removable-symbolic"
+            elif device_type == "DRIVE":
+                icon_name = "drive-harddisk-symbolic"
+            elif device_type in ("PHONE", "IPAD"):
+                icon_name = "phone-symbolic"
+            else:
+                icon_name = "computer-symbolic"
+
             icon = Gtk.Image(icon_name=icon_name)
-            if not row_data.get("connected"):
+            if not connected:
                 icon.set_opacity(0.4)
+
             label = Gtk.Label(label=row_data["name"], halign=Gtk.Align.START)
             sub = Gtk.Label(label=row_data["subtitle"], halign=Gtk.Align.START,
                             css_classes=["caption", "dim-label"])
             line.append(icon)
             line.append(label)
 
-            # NEW: Show MAIN badge if this is the main device
+            # Show MAIN badge if this is the main device
             if row_data.get("is_main"):
                 main_badge = Gtk.Label(label="MAIN", css_classes=["accent", "success"],
                                        halign=Gtk.Align.END, hexpand=True)
@@ -161,19 +188,42 @@ class MainWindow(Gtk.ApplicationWindow):
                 badge = Gtk.Label(label=row_data["badge"],
                                   css_classes=["success"], halign=Gtk.Align.END, hexpand=True)
                 line.append(badge)
+
             box.append(line)
             box.append(sub)
             row = Gtk.ListBoxRow(child=box)
             row.row_data = row_data
             listbox.append(row)
 
-    def refresh_folders(self):
-        from . import backend
-        devices = backend.list_devices(self.get_config())
-        names = [d["name"] for d in devices]
-        rows = backend.list_folders(self.get_config(), names)
-        print(f"[MAIN_WINDOW] refresh_folders() - Showing {len(rows)} folders")
-        self._fill_list(self.folders_list, rows)
+    # ============================================================
+    # Folder list WITHOUT icons
+    # ============================================================
+    def _fill_list_folders(self, listbox, rows):
+        self._clear_listbox(listbox)
+        for row_data in rows:
+            box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=2,
+                          margin_top=6, margin_bottom=6)
+            line = Gtk.Box(spacing=6)
+
+            # NO ICON for folders - just text
+            label = Gtk.Label(label=row_data["name"], halign=Gtk.Align.START,
+                              css_classes=["heading"])
+            sub = Gtk.Label(label=row_data["subtitle"], halign=Gtk.Align.START,
+                            css_classes=["caption", "dim-label"])
+
+            line.append(label)
+
+            # Show sync status badge on the right
+            if row_data.get("badge"):
+                badge = Gtk.Label(label=row_data["badge"],
+                                  css_classes=["success"], halign=Gtk.Align.END, hexpand=True)
+                line.append(badge)
+
+            box.append(line)
+            box.append(sub)
+            row = Gtk.ListBoxRow(child=box)
+            row.row_data = row_data
+            listbox.append(row)
 
     @staticmethod
     def _clear_listbox(listbox):
