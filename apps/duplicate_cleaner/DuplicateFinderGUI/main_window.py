@@ -141,6 +141,8 @@ class MainWindow(Gtk.ApplicationWindow):
         self._build_ui()
         self.reset_state()
 
+        self.folder_entry.connect("changed", self._on_folder_entry_changed)
+
     def _build_ui(self):
         """Build main UI layout."""
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
@@ -485,23 +487,33 @@ class MainWindow(Gtk.ApplicationWindow):
             listbox.remove(child)
             child = nxt
 
+    def _update_folder_path(self, folder_path: str):
+        """Centralized helper to update path and validate scan button state."""
+        self.folder_path = folder_path
+
+        # Check if path exists and is a valid directory
+        is_valid = bool(folder_path) and os.path.isdir(folder_path)
+        self.scan_btn.set_sensitive(is_valid)
+
+    def _on_folder_entry_changed(self, entry):
+        """Triggered whenever the user types, pastes, or modifies text in folder_entry."""
+        path = entry.get_text().strip()
+        self._update_folder_path(path)
+
     def on_browse_folder(self, button):
         """Open folder browser dialog using GTK4 FileDialog."""
-        # Create a file dialog
         dlg = Gtk.FileDialog()
         dlg.set_title("Select Folder to Scan")
         dlg.set_modal(True)
 
-        # Set preferred folder
-        current_text = self.folder_entry.get_text()
+        current_text = self.folder_entry.get_text().strip()
         if current_text and os.path.isdir(current_text):
             try:
                 file = Gio.File.new_for_path(current_text)
                 dlg.set_initial_folder(file)
-            except:
+            except Exception:
                 pass
 
-        # Use select_folder for async folder selection
         dlg.select_folder(
             parent=self,
             cancellable=None,
@@ -514,23 +526,32 @@ class MainWindow(Gtk.ApplicationWindow):
             file = source.select_folder_finish(res)
             if file:
                 folder = file.get_path()
+                # Setting text will automatically fire the "changed" signal
                 self.folder_entry.set_text(folder)
-                self.folder_path = folder
-                self.scan_btn.set_sensitive(True)
                 print(f"[DEBUG] Folder selected: {folder}")
         except GLib.Error as e:
-            # User cancelled or error occurred
             print(f"[DEBUG] File dialog cancelled or error: {e.message}")
 
     def _on_folder_drop(self, target, value, x, y):
         """Handle folder drop on drop zone."""
+        # Handle Gio.File directly
         if isinstance(value, Gio.File):
             folder = value.get_path()
-            self.folder_entry.set_text(folder)
-            self.folder_path = folder
-            self.scan_btn.set_sensitive(True)  # Enable scan button
-            print(f"[DEBUG] Folder dropped: {folder}")
-            return True
+            if folder and os.path.isdir(folder):
+                self.folder_entry.set_text(folder)
+                print(f"[DEBUG] Folder dropped: {folder}")
+                return True
+
+        # Handle Gdk.FileList or list of Gio.File objects if value contains multiple items
+        elif hasattr(value, "get_files"):
+            files = value.get_files()
+            if files and isinstance(files[0], Gio.File):
+                folder = files[0].get_path()
+                if folder and os.path.isdir(folder):
+                    self.folder_entry.set_text(folder)
+                    print(f"[DEBUG] Folder dropped from list: {folder}")
+                    return True
+
         return False
 
     def on_scan(self, button):
