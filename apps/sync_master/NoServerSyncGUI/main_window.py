@@ -1,108 +1,205 @@
 import threading
 
-from gi.repository import Gtk, GLib, Gdk, Gio
+from gi.repository import Gtk, GLib, Gdk, Gio, Adw
 
 from .backend import MODE_DIFF, MODE_SYNC
-from .dialogs import AddDeviceDialog, AddFolderDialog, OK
+from .dialogs import AddDeviceDialog, AddFolderDialog
 
 APP_NAME = "NoServerSync"
 
 
 class MainWindow(Gtk.ApplicationWindow):
     def __init__(self, **kwargs):
-        super().__init__(title=APP_NAME, default_width=1100, default_height=700, **kwargs)
+        super().__init__(title=APP_NAME, default_width=1400, default_height=800, **kwargs)
         self._selected_device = None
         self._selected_folder = None
         self._build_ui()
         self.refresh_all()
 
     def _build_ui(self):
+        # Main vertical box - ONE container only
+        main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
+
+        # HeaderBar (replaces the duplicated header)
         header = Gtk.HeaderBar()
 
+        # Menu button on right
         menu = Gio.Menu()
         menu.append("About", "app.about")
         menu.append("Quit", "app.quit")
-
         menu_btn = Gtk.MenuButton(icon_name="open-menu-symbolic")
         menu_btn.set_menu_model(menu)
         header.pack_end(menu_btn)
 
-        box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL)
-        top = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12, margin_top=6,
-                      margin_bottom=6, margin_start=6, margin_end=6)
-        top.set_vexpand(False)
+        # Set title in header
+        title_label = Gtk.Label(label=APP_NAME, css_classes=["title"])
+        header.set_title_widget(title_label)
 
-        dev_frame, self.devices_list = self._section("Devices", on_add=self.on_add_device)
-        fold_frame, self.folders_list = self._section("Folders", on_add=self.on_add_folder)
+        main_box.append(header)
 
-        self.detail_stack = Gtk.Stack(vexpand=True)
-        self.detail_stack.add_named(self._placeholder_label("Select a folder"), "empty")
-        self.detail_stack.add_named(self._build_folder_detail(), "detail")
-        self.detail_stack.set_visible_child_name("empty")
+        # ==================== TOP PANEL: DEVICES (full width) ====================
+        devices_panel = self._build_devices_panel()
+        main_box.append(devices_panel)
 
-        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, wide_handle=True)
-        paned.set_position(240)
-        paned.set_start_child(dev_frame)
-        inner_paned = Gtk.Paned(wide_handle=True)
-        inner_paned.set_position(280)
-        inner_paned.set_start_child(fold_frame)
-        inner_paned.set_end_child(self.detail_stack)
-        paned.set_end_child(inner_paned)
+        # ==================== MIDDLE PANEL: 3 COLUMNS ====================
+        middle_paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, wide_handle=True)
+        middle_paned.set_position(280)  # Left column width
 
-        log_frame = Gtk.Frame(margin_start=6, margin_end=6, margin_bottom=6)
-        log_scroller = Gtk.ScrolledWindow(vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
-                                          height_request=120)
-        self.log_view = Gtk.TextView(wrap_mode=Gtk.WrapMode.WORD_CHAR, editable=False,
-                                     css_classes=["log"])
-        log_scroller.set_child(self.log_view)
-        log_frame.set_child(log_scroller)
+        # Column 1: Folders list
+        folders_column = self._build_folders_panel()
+        middle_paned.set_start_child(folders_column)
 
-        top.append(paned)
-        box.append(header)
-        box.append(top)
-        box.append(log_frame)
-        self.set_child(box)
+        # Column 2: Folder details
+        details_column = self._build_details_panel()
 
-    def _section(self, title, on_add):
-        frame = Gtk.Frame(margin_start=6, margin_top=6, margin_bottom=6)
-        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, margin_top=4)
+        # Inner paned for columns 2 and 3
+        inner_paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, wide_handle=True)
+        inner_paned.set_position(500)  # Details column width
+        inner_paned.set_start_child(details_column)
 
-        header = Gtk.Box(spacing=6, margin_start=6, margin_end=6, margin_bottom=2)
-        header.append(Gtk.Label(label=title, halign=Gtk.Align.START, hexpand=True,
-                                css_classes=["heading"]))
-        add_btn = Gtk.Button(icon_name="list-add-symbolic", tooltip_text=f"Add {title.lower()}")
-        add_btn.connect("clicked", lambda *_: on_add())
-        header.append(add_btn)
+        # Column 3: Sync activity
+        sync_column = self._build_sync_panel()
+        inner_paned.set_end_child(sync_column)
 
-        scroller = Gtk.ScrolledWindow(vexpand=True)
-        lst = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE, css_classes=["boxed-list"])
-        lst.connect("row-selected", self.on_section_selected, title)
-        scroller.set_child(lst)
+        middle_paned.set_end_child(inner_paned)
+        main_box.append(middle_paned)
 
-        vbox.append(header)
+        self.set_child(main_box)
+
+    # ============================================================
+    # Devices Panel (Full Width)
+    # ============================================================
+    def _build_devices_panel(self):
+        """Devices list spanning full window width."""
+        frame = Gtk.Frame(margin_start=12, margin_end=12, margin_top=12)
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                       margin_start=12, margin_end=12, margin_top=12, margin_bottom=12)
+
+        # Header row - FIXED: use Gtk.Box() instead of Gtk.Widget()
+        header_row = Gtk.Box(spacing=12)
+        header_row.append(Gtk.Label(label="Devices", css_classes=["title-3"]))
+        # Create a flexible spacer
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        header_row.append(spacer)
+        add_btn = Gtk.Button(icon_name="list-add-symbolic", valign=Gtk.Align.CENTER,
+                            tooltip_text="Add Device")
+        add_btn.connect("clicked", lambda *_: self.on_add_device())
+        header_row.append(add_btn)
+        vbox.append(header_row)
+
+        # Listbox
+        scroller = Gtk.ScrolledWindow(vexpand=True, vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+                                      hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                      min_content_height=150)
+        self.devices_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE,
+                                        css_classes=["boxed-list"])
+        self.devices_list.connect("row-selected", self.on_device_selected)
+        scroller.set_child(self.devices_list)
         vbox.append(scroller)
+
         frame.set_child(vbox)
-        return frame, lst
+        return frame
 
-    def _build_folder_detail(self):
-        outer = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
-                        margin_top=12, margin_start=12, margin_end=12)
+    def _build_folders_panel(self):
+        """Folders list in left column."""
+        frame = Gtk.Frame(margin_start=12, margin_end=6, margin_top=12, margin_bottom=12)
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                       margin_start=12, margin_end=12, margin_top=12, margin_bottom=12)
 
-        self.detail_title = Gtk.Label(css_classes=["title-2"], halign=Gtk.Align.START)
+        # Header row - FIXED
+        header_row = Gtk.Box(spacing=12)
+        header_row.append(Gtk.Label(label="Folders", css_classes=["title-3"]))
+        spacer = Gtk.Box()
+        spacer.set_hexpand(True)
+        header_row.append(spacer)
+        add_btn = Gtk.Button(icon_name="list-add-symbolic", valign=Gtk.Align.CENTER,
+                            tooltip_text="Add Folder")
+        add_btn.connect("clicked", lambda *_: self.on_add_folder())
+        header_row.append(add_btn)
+        vbox.append(header_row)
+
+        # Listbox
+        scroller = Gtk.ScrolledWindow(vexpand=True, vscrollbar_policy=Gtk.PolicyType.AUTOMATIC,
+                                      hscrollbar_policy=Gtk.PolicyType.NEVER,
+                                      min_content_height=300)
+        self.folders_list = Gtk.ListBox(selection_mode=Gtk.SelectionMode.SINGLE,
+                                        css_classes=["boxed-list"])
+        self.folders_list.connect("row-selected", self.on_folder_selected)
+        scroller.set_child(self.folders_list)
+        vbox.append(scroller)
+
+        frame.set_child(vbox)
+        return frame
+
+    # ============================================================
+    # Details Panel (Center Column - 1/3)
+    # ============================================================
+    def _build_details_panel(self):
+        """Selected folder details in center column."""
+        frame = Gtk.Frame(margin_start=6, margin_end=6, margin_top=12, margin_bottom=12)
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                       margin_start=12, margin_end=12, margin_top=12, margin_bottom=12)
+
+        # Placeholder when no folder selected
+        self.empty_placeholder = Gtk.Label(
+            label="Select a folder to see details",
+            css_classes=["dim-label"],
+            margin_top=60
+        )
+        vbox.append(self.empty_placeholder)
+
+        # Details stack (hidden initially)
+        self.details_stack = Gtk.Stack(visible=False)
+
+        # Title
+        self.detail_title = Gtk.Label(css_classes=["title-3"], halign=Gtk.Align.START)
         self.detail_subtitle = Gtk.Label(halign=Gtk.Align.START, css_classes=["dim-label"])
-        outer.append(self.detail_title)
-        outer.append(self.detail_subtitle)
+        self.details_stack.add_titled(self.detail_title, "title", "")
+        vbox.append(self.detail_title)
+        vbox.append(self.detail_subtitle)
 
-        self.class_grid = Gtk.Grid(column_spacing=24, row_spacing=6, margin_top=6,
-                                   margin_bottom=6)
-        outer.append(self.class_grid)
+        # Grid for info
+        self.detail_grid = Gtk.Grid(column_spacing=24, row_spacing=12, margin_top=6)
+        self.details_stack.add_titled(self.detail_grid, "grid", "")
+        vbox.append(self.detail_grid)
 
-        self.file_scroller = Gtk.ScrolledWindow(vexpand=True)
+        vbox.append(self.details_stack)
+        frame.set_child(vbox)
+        return frame
+
+    # ============================================================
+    # Sync Activity Panel (Right Column - 1/3)
+    # ============================================================
+    def _build_sync_panel(self):
+        """Sync activity and logs in right column."""
+        frame = Gtk.Frame(margin_start=6, margin_end=12, margin_top=12, margin_bottom=12)
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
+                       margin_start=12, margin_end=12, margin_top=12, margin_bottom=12)
+
+        # Header
+        header_row = Gtk.Box(spacing=6)
+        header_row.append(Gtk.Label(label="Sync Activity", css_classes=["title-3"]))
+        self.spinner = Gtk.Spinner(spinning=False)
+        header_row.append(self.spinner)
+        self.status_lbl = Gtk.Label(css_classes=["dim-label"])
+        header_row.append(self.status_lbl)
+        vbox.append(header_row)
+
+        # Classification summary
+        self.class_grid = Gtk.Grid(column_spacing=24, row_spacing=6, margin_top=6)
+        vbox.append(self.class_grid)
+
+        # File list - FIXED: Use set_min_content_height() method
+        file_scroller = Gtk.ScrolledWindow(vexpand=True)
+        file_scroller.set_min_content_height(200)  # Set on scrolled window instead
+
         self.file_view = Gtk.TextView(wrap_mode=Gtk.WrapMode.NONE, editable=False,
                                       css_classes=["file-table", "log"])
-        self.file_scroller.set_child(self.file_view)
-        outer.append(self.file_scroller)
+        file_scroller.set_child(self.file_view)
+        vbox.append(file_scroller)
 
+        # Action buttons
         btn_box = Gtk.Box(spacing=8, halign=Gtk.Align.END, margin_bottom=4)
         self.btn_preview = Gtk.Button(label="Preview (diff)")
         self.btn_preview.connect("clicked", lambda *_: self.run_sync(MODE_DIFF))
@@ -110,30 +207,21 @@ class MainWindow(Gtk.ApplicationWindow):
         self.btn_sync.connect("clicked", lambda *_: self.run_sync(MODE_SYNC))
         btn_box.append(self.btn_preview)
         btn_box.append(self.btn_sync)
-        outer.append(btn_box)
+        vbox.append(btn_box)
 
-        spinner_row = Gtk.Box(spacing=8)
-        self.spinner = Gtk.Spinner(spinning=False)
-        self.status_lbl = Gtk.Label(css_classes=["dim-label"])
-        spinner_row.append(self.spinner)
-        spinner_row.append(self.status_lbl)
-        outer.append(spinner_row)
+        frame.set_child(vbox)
+        return frame
 
-        return outer
-
-    def _placeholder_label(self, text):
-        lbl = Gtk.Label(label=text, css_classes=["dim-label"], margin_top=24)
-        return lbl
-
+    # ============================================================
+    # Data Refresh Methods
+    # ============================================================
     def refresh_all(self):
-        print(f"[MAIN_WINDOW] refresh_all() - Devices: {list(self.get_config()['devices'].keys())}")
         self.refresh_devices()
         self.refresh_folders()
 
     def refresh_devices(self):
         from . import backend
         rows = backend.list_devices(self.get_config())
-        print(f"[MAIN_WINDOW] refresh_devices() - Showing {len(rows)} devices")
         self._fill_list_devices(self.devices_list, rows)
 
     def refresh_folders(self):
@@ -141,12 +229,8 @@ class MainWindow(Gtk.ApplicationWindow):
         devices = backend.list_devices(self.get_config())
         names = [d["name"] for d in devices]
         rows = backend.list_folders(self.get_config(), names)
-        print(f"[MAIN_WINDOW] refresh_folders() - Showing {len(rows)} folders")
         self._fill_list_folders(self.folders_list, rows)
 
-    # ============================================================
-    # Device list WITH icons
-    # ============================================================
     def _fill_list_devices(self, listbox, rows):
         self._clear_listbox(listbox)
         for row_data in rows:
@@ -154,7 +238,6 @@ class MainWindow(Gtk.ApplicationWindow):
                           margin_top=6, margin_bottom=6)
             line = Gtk.Box(spacing=6)
 
-            # Choose icon based on device type
             device_type = row_data.get("type", "COMPUTER")
             connected = row_data.get("connected", False)
 
@@ -179,7 +262,6 @@ class MainWindow(Gtk.ApplicationWindow):
             line.append(icon)
             line.append(label)
 
-            # Show MAIN badge if this is the main device
             if row_data.get("is_main"):
                 main_badge = Gtk.Label(label="MAIN", css_classes=["accent", "success"],
                                        halign=Gtk.Align.END, hexpand=True)
@@ -195,9 +277,6 @@ class MainWindow(Gtk.ApplicationWindow):
             row.row_data = row_data
             listbox.append(row)
 
-    # ============================================================
-    # Folder list WITHOUT icons
-    # ============================================================
     def _fill_list_folders(self, listbox, rows):
         self._clear_listbox(listbox)
         for row_data in rows:
@@ -205,7 +284,6 @@ class MainWindow(Gtk.ApplicationWindow):
                           margin_top=6, margin_bottom=6)
             line = Gtk.Box(spacing=6)
 
-            # NO ICON for folders - just text
             label = Gtk.Label(label=row_data["name"], halign=Gtk.Align.START,
                               css_classes=["heading"])
             sub = Gtk.Label(label=row_data["subtitle"], halign=Gtk.Align.START,
@@ -213,7 +291,6 @@ class MainWindow(Gtk.ApplicationWindow):
 
             line.append(label)
 
-            # Show sync status badge on the right
             if row_data.get("badge"):
                 badge = Gtk.Label(label=row_data["badge"],
                                   css_classes=["success"], halign=Gtk.Align.END, hexpand=True)
@@ -234,86 +311,69 @@ class MainWindow(Gtk.ApplicationWindow):
             child = nxt
 
     def get_config(self):
-        """Get config from application (NO reloading from disk)."""
-        app = self.get_application()
-        if hasattr(app, 'config') and app.config is not None:
-            return app.config
-        # Fallback: reload from disk
-        print("[MAIN_WINDOW] WARNING: Using fallback config reload")
         from . import backend
-        return backend.load_config()
+        config = backend.load_config()
+        self.get_application().update_config(config)
+        return config
 
-    def on_section_selected(self, listbox, row, which):
+    # ============================================================
+    # Event Handlers
+    # ============================================================
+    def on_device_selected(self, listbox, row):
         if row is None:
             return
         data = row.row_data
-        if which == "Devices":
-            self._selected_device = data["name"]
-            print(f"[MAIN_WINDOW] Selected device: {self._selected_device}")
-            self.refresh_folders()
-        else:
-            self._selected_folder = data["name"]
-            print(f"[MAIN_WINDOW] Selected folder: {self._selected_folder}")
-            self.show_folder_detail(data)
+        self._selected_device = data["name"]
+        print(f"[MAIN_WINDOW] Selected device: {self._selected_device}")
+        self.refresh_folders()
+
+    def on_folder_selected(self, listbox, row):
+        if row is None:
+            # Deselect - show empty placeholder
+            self.empty_placeholder.set_visible(True)
+            self.details_stack.set_visible_child_name("")
+            return
+        data = row.row_data
+        self._selected_folder = data["name"]
+        print(f"[MAIN_WINDOW] Selected folder: {self._selected_folder}")
+        self.show_folder_detail(data)
 
     def show_folder_detail(self, row_data):
+        # Hide placeholder, show details
+        self.empty_placeholder.set_visible(False)
+        self.details_stack.set_visible_child_name("title")
+
         self.detail_title.set_text(row_data["name"])
         self.detail_subtitle.set_text(row_data["subtitle"])
 
-        # Clear existing grid
-        for child in list(self.class_grid):
-            self.class_grid.remove(child)
+        # Clear and rebuild grid
+        for child in list(self.detail_grid):
+            self.detail_grid.remove(child)
 
         detail = row_data.get("detail", {})
+        col = 0
+        for key, value in detail.items():
+            self.detail_grid.attach(Gtk.Label(label=key.upper(), halign=Gtk.Align.START,
+                                              css_classes=["caption", "dim-label"]), col, 0, 1, 1)
+            self.detail_grid.attach(Gtk.Label(label=str(value), halign=Gtk.Align.START), col, 1, 1, 1)
+            col += 1
 
-        # NEW: Handle single vs multi-device display
-        if "devices" in detail:
-            devices_str = detail["devices"]
-            self.class_grid.attach(Gtk.Label(label="DEVICES", halign=Gtk.Align.START,
-                                             css_classes=["caption", "dim-label"]), 0, 0, 1, 1)
-            self.class_grid.attach(Gtk.Label(label=devices_str, halign=Gtk.Align.START), 0, 1, 1, 1)
-
-            if "direction" in detail:
-                self.class_grid.attach(Gtk.Label(label="DIRECTION", halign=Gtk.Align.START,
-                                                 css_classes=["caption", "dim-label"]), 1, 0, 1, 1)
-                self.class_grid.attach(Gtk.Label(label=detail["direction"], halign=Gtk.Align.START), 1, 1, 1, 1)
-        else:
-            # Legacy single-device format
-            for col, (key, value) in enumerate(detail.items()):
-                self.class_grid.attach(Gtk.Label(label=key.upper(), halign=Gtk.Align.START,
-                                                 css_classes=["caption", "dim-label"]), col, 0, 1, 1)
-                self.class_grid.attach(Gtk.Label(label=str(value), halign=Gtk.Align.START), col, 1, 1, 1)
-
-        self.detail_stack.set_visible_child_name("detail")
+        self.details_stack.set_visible_child_name("grid")
 
     def on_add_device(self):
         from . import backend
         existing = [d["name"] for d in backend.list_devices(self.get_config())]
-        print(f"[MAIN_WINDOW] on_add_device - Existing devices: {existing}")
         dlg = AddDeviceDialog(self, existing=existing)
         dlg.connect("response", self.on_add_device_response)
         dlg.present()
 
     def on_add_device_response(self, dlg, response):
         from . import backend
-        print(f"[MAIN_WINDOW] on_add_device_response - Response: {response}")
-        if response == OK:
+        if response == "ok":
             values = dlg.get_values()
-            print(f"[MAIN_WINDOW] Adding device with values: {values}")
-
-            # Get CURRENT config from app (not from disk)
-            config = self.get_config()
-            print(f"[MAIN_WINDOW] Current config devices: {list(config['devices'].keys())}")
-
-            msg, config = backend.add_device(config, **values)
-            print(f"[MAIN_WINDOW] add_device returned: {msg}, new devices: {list(config['devices'].keys())}")
-
+            msg, config = backend.add_device(self.get_config(), **values)
             self.log(msg)
-
-            # Update app's config
             self.get_application().update_config(config)
-            print(f"[MAIN_WINDOW] Updated app config, now refreshing...")
-
             self.refresh_all()
         dlg.destroy()
 
@@ -329,43 +389,30 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def on_add_folder_response(self, dlg, response):
         from . import backend
-        print(f"[MAIN_WINDOW] on_add_folder_response - Response: {response}")
-        if response == OK:
+        if response == "ok":
             values = dlg.get_values()
-            print(f"[MAIN_WINDOW] Adding folder with values: {values}")
-
-            # Get CURRENT config from app (not from disk)
-            config = self.get_config()
-            print(f"[MAIN_WINDOW] Current config devices: {list(config['devices'].keys())}")
-
-            msg, config = backend.add_folder(config, **values)
-            print(f"[MAIN_WINDOW] add_folder returned: {msg}")
-
+            msg, config = backend.add_folder(self.get_config(), **values)
             self.log(msg)
-
-            # Update app's config
             self.get_application().update_config(config)
-            print(f"[MAIN_WINDOW] Updated app config, now refreshing...")
-
             self.refresh_all()
         dlg.destroy()
 
+    # ============================================================
+    # Sync Operations
+    # ============================================================
     def run_sync(self, mode):
         from . import backend
         if not self._selected_folder:
             self.log("No folder selected.")
             return
 
-        # NEW: Check if main device is set
-        config = self.get_config()
+        config = self.get_config()  # Get config BEFORE defining worker
         main_device = backend.get_main_device(config)
         if not main_device:
-            self.log("ERROR: No main device configured. Add a device and set it as 'main' first.")
-            # Show error dialog
             err_dialog = Adw.MessageDialog(
                 transient_for=self,
                 heading="No Main Device",
-                body="You must set a main device before syncing. Click 'Add Device' and enable 'Set as main device'."
+                body="You must set a main device before syncing."
             )
             err_dialog.add_response("ok", "OK")
             err_dialog.present()
@@ -377,10 +424,12 @@ class MainWindow(Gtk.ApplicationWindow):
         self.spinner.start()
         self.status_lbl.set_text("Scanning…" if mode == MODE_DIFF else "Synchronizing…")
 
+        # Capture config and other variables for worker thread
         def worker():
-            report, config, error = backend.run_sync_report(self.get_config(), mode, folder,
-                                                            log_callback=self.log_from_thread)
-            GLib.idle_add(self._sync_finished, report, config, error)
+            # Use the config captured from outer scope
+            report, updated_config, error = backend.run_sync_report(config, mode, folder,
+                                                                    log_callback=self.log_from_thread)
+            GLib.idle_add(self._sync_finished, report, updated_config, error)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -393,7 +442,6 @@ class MainWindow(Gtk.ApplicationWindow):
         if error:
             self.log(f"Error: {error}")
         else:
-            # Update application config
             self.get_application().update_config(config)
             self._render_report(report)
         return GLib.SOURCE_REMOVE
@@ -410,8 +458,8 @@ class MainWindow(Gtk.ApplicationWindow):
                 buf.insert(buf.get_end_iter(), "\n")
 
     def log(self, message):
-        buf = self.log_view.get_buffer()
-        buf.insert_markup(buf.get_end_iter(), f"[INFO] {GLib.markup_escape_text(str(message))}\n", -1)
+        buf = self.file_view.get_buffer()
+        buf.insert_markup(buf.get_end_iter(), f"[LOG] {GLib.markup_escape_text(str(message))}\n", -1)
 
     def log_from_thread(self, message):
         GLib.idle_add(self.log, message)
