@@ -31,11 +31,11 @@ MODE_DIFF = "diff"
 MODE_SYNC = "sync"
 
 
-
 # Add this getter function
 def get_main_device(config):
     """Return the current main device name (may be None)."""
     return _get_main_device(config)
+
 
 def _capture(fn, *args, **kwargs):
     """Run a synclib function, capturing its print output."""
@@ -47,7 +47,6 @@ def _capture(fn, *args, **kwargs):
 
 def _ensure_config():
     """Ensure config file exists by running init_sync_tracker if needed."""
-    from NoServerSync.synclib import CONFIG_PATH
     if not os.path.exists(CONFIG_PATH):
         init_sync_tracker(path=CONFIG_PATH)
 
@@ -222,36 +221,61 @@ def _do_sync(config, device, folder, classified, main, log_callback):
 
 
 def list_folders(config, device_names) -> list:
-    """Folders shared between the main device and connected devices."""
+    """Folders shared between devices, aggregated by folder name."""
     try:
         main = get_main_device(config)
-    except Exception:
+    except Exception as e:
+        print(f"[BACKEND] list_folders() error getting main device: {e}")
         return []
 
-    connected = [d for d in device_names if d != main]
+    # Group folders by name, collecting all devices that track each folder
+    folder_devices_map = {}  # folder_name -> list of device info dicts
+
+    for dev_name in device_names:
+        if dev_name not in config[CONFIG_DEVICES_KEY_NAME]:
+            continue
+
+        dev_config = config[CONFIG_DEVICES_KEY_NAME][dev_name]
+        for folder in dev_config.get("tracked_folders", []):
+            if folder not in folder_devices_map:
+                folder_devices_map[folder] = []
+
+            folder_devices_map[folder].append({
+                "name": dev_name,
+                "direction": config.get("tracked_folders", {}).get(folder, {})
+                .get("devices_direction", {}).get(dev_name, "bidirectional"),
+                "last_sync": config.get("tracked_folders", {}).get(folder, {})
+                .get("devices_sync", {}).get(dev_name, None),
+                "connected": Path(dev_config["path"]).exists(),
+            })
+
+    # Build rows from aggregated data
     folders = []
-    seen = set()
+    for folder_name, device_infos in folder_devices_map.items():
+        # Determine subtitle and detail based on how many devices track this folder
+        if len(device_infos) == 1:
+            dev = device_infos[0]
+            subtitle = f"{dev['direction']} — on {dev['name']}"
+            detail = {"devices": dev['name'], "direction": dev['direction']}
+            badge = None if dev["connected"] else "offline"
+        else:
+            # Multiple devices tracking same folder
+            connected_devs = [d["name"] for d in device_infos if d["connected"]]
+            directions = set(d["direction"] for d in device_infos)
+            subtitle = f"{', '.join(connected_devs)} ({len(connected_devs)}/{len(device_infos)})"
+            detail = {"devices": ", ".join(connected_devs),
+                      "direction": "mixed" if len(directions) > 1 else list(directions)[0]}
+            badge = f"{len(connected_devs)}/{len(device_infos)} online"
 
-    for dev in connected:
-        for folder in config[CONFIG_DEVICES_KEY_NAME][dev].get("tracked_folders", []):
-            if folder in seen:
-                continue
+        row = {
+            "name": folder_name,
+            "subtitle": subtitle,
+            "detail": detail,
+            "badge": badge,
+            "devices": device_infos,  # Store for later use if needed
+        }
 
-            main_dev_config = config[CONFIG_DEVICES_KEY_NAME].get(main, {})
-            tracked_on_main = folder in main_dev_config.get("tracked_folders", [])
+        folders.append(row)
 
-            folder_cfg = config.get("tracked_folders", {}).get(folder, {})
-            direction = folder_cfg.get("devices_direction", {}).get(dev, "bidirectional")
-
-            row = {
-                "name": folder,
-                "subtitle": f"{direction} — on {dev}",
-                "detail": {"direction": direction},
-                "badge": None if tracked_on_main else "not on main",
-            }
-
-            if row["name"] not in seen:
-                folders.append(row)
-                seen.add(row["name"])
-
+    print(f"[BACKEND] list_folders() returning {len(folders)} folders: {[f['name'] for f in folders]}")
     return folders

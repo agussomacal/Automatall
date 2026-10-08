@@ -1,5 +1,7 @@
 import os
 
+from NoServerSync.synclib import CONFIG_DEVICES_KEY_NAME
+from gi.overrides.Gio import Gio
 from gi.repository import Gtk, Adw
 
 from .backend import DEVICE_TYPES, DEVICE_DIRECTIONS
@@ -84,21 +86,36 @@ class AddDeviceDialog(Adw.MessageDialog):
         dlg.destroy()
 
 
-
 class AddFolderDialog(Adw.MessageDialog):
     """Maps to cmd_frontend.add_folder / synclib.add_tracking_to_folder."""
 
     def __init__(self, parent, device_name, config):
+        # Get device's mount path
+        try:
+            device_config = config[CONFIG_DEVICES_KEY_NAME][device_name]
+            base_path = device_config["path"]
+        except Exception as e:
+            print(f"[DIALOGS] Error getting device path: {e}")
+            base_path = "/"
+
         super().__init__(transient_for=parent, modal=True,
-                         heading=f"Add Folder to '{device_name}'")
+                         heading=f"Add Folder to '{device_name}'",
+                         body="Select a folder within this device's mount path.")
         self.add_response("cancel", "Cancel")
-        self.add_response(OK, "Add")
-        self.set_response_appearance(OK, Adw.ResponseAppearance.SUGGESTED)
+        self.add_response("ok", "Add")
+        self.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
 
         self.device_name = device_name
+        self.base_path = base_path  # Store for validation
 
         form = Adw.PreferencesGroup()
-        self.path_entry = Adw.EntryRow(title="Absolute path to folder")
+
+        # Path entry with device base path as default
+        self.path_entry = Adw.EntryRow(
+            title="Absolute path to folder",
+            text=base_path  # Default to device's mount path
+        )
+
         browse = Gtk.Button(icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER)
         browse.connect("clicked", self._browse)
         self.path_entry.add_suffix(browse)
@@ -118,21 +135,90 @@ class AddFolderDialog(Adw.MessageDialog):
             form.add(w)
         self.set_extra_child(form)
 
-        self.path_entry.connect("changed", lambda *_:
-        self.set_response_enabled(OK, bool(self.path_entry.get_text().strip())))
+        # Wire live validation
+        self.path_entry.connect("changed", lambda *_: self._validate())
+        self._validate()
 
     def _browse(self, *_):
-        dlg = Gtk.FileChooserNative(transient_for=self, action=Gtk.FileChooserAction.SELECT_FOLDER)
+        """Open file chooser starting at the device's mount path."""
+        dlg = Gtk.FileChooserNative(
+            transient_for=self,
+            action=Gtk.FileChooserAction.SELECT_FOLDER,
+            title="Select Folder",
+            accept_label="Select",
+            cancel_label="Cancel"
+        )
+
+        # Set current folder to device's base path if it exists
+        if os.path.exists(self.base_path):
+            try:
+                file = Gio.File.new_for_path(self.base_path)
+                dlg.set_current_folder(file, None)
+            except:
+                pass  # If it fails, just use default
+
         dlg.connect("response", self._folder_chosen)
         dlg.show()
 
     def _folder_chosen(self, dlg, resp):
         if resp == Gtk.ResponseType.ACCEPT and dlg.get_file():
-            self.path_entry.set_text(dlg.get_file().get_path())
+            selected_path = dlg.get_file().get_path()
+
+            # Validate: folder must be within device's base path
+            if not selected_path.startswith(self.base_path):
+                # Show error dialog
+                err_dlg = Adw.MessageDialog(
+                    transient_for=self,
+                    heading="Invalid Path",
+                    body=f"This folder must be within the device's mount path:\n\n{self.base_path}\n\nSelected: {selected_path}"
+                )
+                err_dlg.add_response("ok", "OK")
+                err_dlg.present()
+                dlg.destroy()
+                return
+
+            # Valid path, set it
+            self.path_entry.set_text(selected_path)
+
         dlg.destroy()
 
     def _split(self, entry):
         return [t for t in entry.get_text().strip().split(" ") if t]
+
+    def _validate(self):
+        """Validate path exists and is within device's base path."""
+        path = self.path_entry.get_text().strip()
+
+        # Empty path
+        if not path:
+            self.set_response_enabled("ok", False)
+            return
+
+        # Path must exist
+        if not os.path.exists(path):
+            self.set_response_enabled("ok", False)
+            return
+
+        # Path must be a directory
+        if not os.path.isdir(path):
+            self.set_response_enabled("ok", False)
+            return
+
+        # CRITICAL: Path must be within device's base path (security check)
+        try:
+            real_base = os.path.realpath(self.base_path)
+            real_path = os.path.realpath(path)
+
+            if not real_path.startswith(real_base + os.sep) and real_path != real_base:
+                self.set_response_enabled("ok", False)
+                return
+        except Exception as e:
+            print(f"[DIALOGS] Validation error: {e}")
+            self.set_response_enabled("ok", False)
+            return
+
+        # All validations passed
+        self.set_response_enabled("ok", True)
 
     def get_values(self):
         return {

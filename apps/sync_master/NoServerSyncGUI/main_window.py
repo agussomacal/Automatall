@@ -209,13 +209,31 @@ class MainWindow(Gtk.ApplicationWindow):
     def show_folder_detail(self, row_data):
         self.detail_title.set_text(row_data["name"])
         self.detail_subtitle.set_text(row_data["subtitle"])
+
+        # Clear existing grid
         for child in list(self.class_grid):
             self.class_grid.remove(child)
+
         detail = row_data.get("detail", {})
-        for col, (key, value) in enumerate(detail.items()):
-            self.class_grid.attach(Gtk.Label(label=key.upper(), halign=Gtk.Align.START,
-                                             css_classes=["caption", "dim-label"]), col, 0, 1, 1)
-            self.class_grid.attach(Gtk.Label(label=str(value), halign=Gtk.Align.START), col, 1, 1, 1)
+
+        # NEW: Handle single vs multi-device display
+        if "devices" in detail:
+            devices_str = detail["devices"]
+            self.class_grid.attach(Gtk.Label(label="DEVICES", halign=Gtk.Align.START,
+                                             css_classes=["caption", "dim-label"]), 0, 0, 1, 1)
+            self.class_grid.attach(Gtk.Label(label=devices_str, halign=Gtk.Align.START), 0, 1, 1, 1)
+
+            if "direction" in detail:
+                self.class_grid.attach(Gtk.Label(label="DIRECTION", halign=Gtk.Align.START,
+                                                 css_classes=["caption", "dim-label"]), 1, 0, 1, 1)
+                self.class_grid.attach(Gtk.Label(label=detail["direction"], halign=Gtk.Align.START), 1, 1, 1, 1)
+        else:
+            # Legacy single-device format
+            for col, (key, value) in enumerate(detail.items()):
+                self.class_grid.attach(Gtk.Label(label=key.upper(), halign=Gtk.Align.START,
+                                                 css_classes=["caption", "dim-label"]), col, 0, 1, 1)
+                self.class_grid.attach(Gtk.Label(label=str(value), halign=Gtk.Align.START), col, 1, 1, 1)
+
         self.detail_stack.set_visible_child_name("detail")
 
     def on_add_device(self):
