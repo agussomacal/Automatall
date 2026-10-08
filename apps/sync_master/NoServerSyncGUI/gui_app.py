@@ -30,10 +30,17 @@ class NoServerSyncGUIApp(Gtk.Application):
         self.add_action(quit_action)
 
     def do_activate(self):
-        # Load configuration ONCE on startup
         print("[GUI_APP] Loading config on startup...")
         self.config = _load_config()
-        print(f"[GUI_APP] Config loaded: devices={list(self.config['devices'].keys())}")
+
+        # Check if main device is set
+        from .backend import get_main_device
+        main = get_main_device(self.config)
+        if not main:
+            print("[GUI_APP] WARNING: No main device configured!")
+            # Could show warning dialog, or just rely on run_sync() check
+
+        print(f"[GUI_APP] Config loaded: devices={list(self.config['devices'].keys())}, main={main}")
 
         if self.window is None:
             self.window = MainWindow(application=self)

@@ -136,14 +136,6 @@ class MainWindow(Gtk.ApplicationWindow):
         print(f"[MAIN_WINDOW] refresh_devices() - Showing {len(rows)} devices")
         self._fill_list(self.devices_list, rows)
 
-    def refresh_folders(self):
-        from . import backend
-        devices = backend.list_devices(self.get_config())
-        names = [d["name"] for d in devices]
-        rows = backend.list_folders(self.get_config(), names)
-        print(f"[MAIN_WINDOW] refresh_folders() - Showing {len(rows)} folders")
-        self._fill_list(self.folders_list, rows)
-
     def _fill_list(self, listbox, rows):
         self._clear_listbox(listbox)
         for row_data in rows:
@@ -159,7 +151,13 @@ class MainWindow(Gtk.ApplicationWindow):
                             css_classes=["caption", "dim-label"])
             line.append(icon)
             line.append(label)
-            if "badge" in row_data and row_data["badge"]:
+
+            # NEW: Show MAIN badge if this is the main device
+            if row_data.get("is_main"):
+                main_badge = Gtk.Label(label="MAIN", css_classes=["accent", "success"],
+                                       halign=Gtk.Align.END, hexpand=True)
+                line.append(main_badge)
+            elif "badge" in row_data and row_data["badge"]:
                 badge = Gtk.Label(label=row_data["badge"],
                                   css_classes=["success"], halign=Gtk.Align.END, hexpand=True)
                 line.append(badge)
@@ -168,6 +166,14 @@ class MainWindow(Gtk.ApplicationWindow):
             row = Gtk.ListBoxRow(child=box)
             row.row_data = row_data
             listbox.append(row)
+
+    def refresh_folders(self):
+        from . import backend
+        devices = backend.list_devices(self.get_config())
+        names = [d["name"] for d in devices]
+        rows = backend.list_folders(self.get_config(), names)
+        print(f"[MAIN_WINDOW] refresh_folders() - Showing {len(rows)} folders")
+        self._fill_list(self.folders_list, rows)
 
     @staticmethod
     def _clear_listbox(listbox):
@@ -281,6 +287,22 @@ class MainWindow(Gtk.ApplicationWindow):
         if not self._selected_folder:
             self.log("No folder selected.")
             return
+
+        # NEW: Check if main device is set
+        config = self.get_config()
+        main_device = backend.get_main_device(config)
+        if not main_device:
+            self.log("ERROR: No main device configured. Add a device and set it as 'main' first.")
+            # Show error dialog
+            err_dialog = Adw.MessageDialog(
+                transient_for=self,
+                heading="No Main Device",
+                body="You must set a main device before syncing. Click 'Add Device' and enable 'Set as main device'."
+            )
+            err_dialog.add_response("ok", "OK")
+            err_dialog.present()
+            return
+
         folder = self._selected_folder
         self.btn_sync.set_sensitive(False)
         self.btn_preview.set_sensitive(False)

@@ -25,10 +25,17 @@ from NoServerSync.synclib import (
     update_sync_time,
 )
 from NoServerSync.synclib import add_device as _add_device
+from NoServerSync.synclib import get_main_device as _get_main_device
 
 MODE_DIFF = "diff"
 MODE_SYNC = "sync"
 
+
+
+# Add this getter function
+def get_main_device(config):
+    """Return the current main device name (may be None)."""
+    return _get_main_device(config)
 
 def _capture(fn, *args, **kwargs):
     """Run a synclib function, capturing its print output."""
@@ -94,15 +101,19 @@ def save_config_debug(config):
         print(f"[BACKEND] ERROR: File still doesn't exist after save!")
 
 
-def add_device(config, device_name, mount_path, device_type, device_direction):
+def add_device(config, device_name, mount_path, device_type, device_direction, set_as_main=False):
     """Add a device and persist to disk."""
-    print(f"[BACKEND] add_device() called with: name={device_name}, path={mount_path}")
+    print(f"[BACKEND] add_device() called with: name={device_name}, path={mount_path}, set_as_main={set_as_main}")
 
-    # FIX: Use _add_device (synclib version), NOT add_device (this wrapper)
+    # Call synclib add_device (without device_direction - it's not used there)
     (msg, config), out = _capture(
         _add_device, config, name=device_name, mount_path=mount_path, device_type=device_type
     )
     print(f"[BACKEND] add_device() returned msg={msg}")
+
+    if set_as_main:
+        config = set_main_device(config, device_name)
+        print(f"[BACKEND] Set main device to: {device_name}")
 
     save_config_debug(config)
     return msg, config

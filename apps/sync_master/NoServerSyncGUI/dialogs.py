@@ -6,6 +6,7 @@ from .backend import DEVICE_TYPES, DEVICE_DIRECTIONS
 
 OK = "ok"
 
+
 class AddDeviceDialog(Adw.MessageDialog):
     """Maps to synclib.add_device()."""
 
@@ -13,11 +14,12 @@ class AddDeviceDialog(Adw.MessageDialog):
         super().__init__(transient_for=parent, modal=True,
                          heading="Add Device", body="Register a device for synchronization.")
         self.add_response("cancel", "Cancel")
-        self.add_response(OK, "Add")
-        self.set_response_appearance(OK, Adw.ResponseAppearance.SUGGESTED)
+        self.add_response("ok", "Add")
+        self.set_response_appearance("ok", Adw.ResponseAppearance.SUGGESTED)
         self.connect("response", self._on_response)
 
         form = Adw.PreferencesGroup()
+
         self.name_entry = Adw.EntryRow(title="Device name (ex: 'usb')")
         self.path_entry = Adw.EntryRow(title="Mount path (ex: /media/user/usb)")
         self.path_chooser = Gtk.Button(icon_name="folder-open-symbolic", valign=Gtk.Align.CENTER)
@@ -34,16 +36,42 @@ class AddDeviceDialog(Adw.MessageDialog):
         dir_row = Adw.ActionRow(title="Sync direction")
         dir_row.add_suffix(self.dir_drop)
 
-        for w in (self.name_entry, self.path_entry, type_row, dir_row):
+        # NEW: Main device checkbox
+        self.main_checkbox = Adw.ActionRow(title="Set as main device")
+        self.main_switch = Gtk.Switch(valign=Gtk.Align.CENTER)
+        self.main_switch.set_active(False)  # Default: not main
+        self.main_checkbox.add_suffix(self.main_switch)
+
+        for w in (self.name_entry, self.path_entry, type_row, dir_row, self.main_checkbox):
             form.add(w)
         self.set_extra_child(form)
+
         self._valid = False
         self.existing = existing
 
         # Wire live validation
         self.name_entry.connect("changed", lambda *_: self._validate())
         self.path_entry.connect("changed", lambda *_: self._validate())
-        self._validate()  # initial state
+        self._validate()
+
+    def _on_response(self, dlg, response):
+        if response == OK:
+            self._valid = True
+
+    def _validate(self):
+        name = self.name_entry.get_text().strip()
+        path = self.path_entry.get_text().strip()
+        ok = name and path not in ("", "/") and os.path.exists(path) and name not in self.existing
+        self.set_response_enabled(OK, ok)
+
+    def get_values(self):
+        return {
+            "device_name": self.name_entry.get_text().strip(),
+            "mount_path": self.path_entry.get_text().strip(),
+            "device_type": DEVICE_TYPES[self.type_drop.get_selected()],
+            "device_direction": DEVICE_DIRECTIONS[self.dir_drop.get_selected()],
+            "set_as_main": self.main_switch.get_active(),  # NEW: Return checkbox state
+        }
 
     def _browse(self, *_):
         dlg = Gtk.FileChooserNative(transient_for=self, action=Gtk.FileChooserAction.SELECT_FOLDER)
@@ -55,23 +83,7 @@ class AddDeviceDialog(Adw.MessageDialog):
             self.path_entry.set_text(dlg.get_file().get_path())
         dlg.destroy()
 
-    def _validate(self):
-        name = self.name_entry.get_text().strip()
-        path = self.path_entry.get_text().strip()
-        ok = name and path not in ("", "/") and os.path.exists(path) and name not in self.existing
-        self.set_response_enabled(OK, ok)
 
-    def _on_response(self, dlg, response):
-        if response == OK:
-            self._valid = True
-
-    def get_values(self):
-        return {
-            "device_name": self.name_entry.get_text().strip(),
-            "mount_path": self.path_entry.get_text().strip(),
-            "device_type": DEVICE_TYPES[self.type_drop.get_selected()],
-            "device_direction": DEVICE_DIRECTIONS[self.dir_drop.get_selected()],
-        }
 
 class AddFolderDialog(Adw.MessageDialog):
     """Maps to cmd_frontend.add_folder / synclib.add_tracking_to_folder."""
