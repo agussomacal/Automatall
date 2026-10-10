@@ -2,10 +2,8 @@
 GUI backend bridge: wraps synclib/cmd_frontend functionality without
 modifying them. Captures stdout (tqdm / prints) and routes it to a callback.
 """
-import io
 import os
 import sys
-from contextlib import redirect_stdout
 from pathlib import Path
 
 from apps.sync_master.NoServerSync.synclib import CONFIG_FOLDERS_KEY_NAME
@@ -162,75 +160,43 @@ def add_folder(config, device_name, path, direction, append_strategy_to_file_end
     return msg, config
 
 
-def run_sync_report(config, mode, folder, log_callback=lambda s: None):
-    """Run sync classification/report."""
-    device_list = get_connected_devices(config)
-    if not device_list:
-        return {"ERROR": ["No connected device found."]}, config, None
-
-    device = device_list[0]
-
-    out_buf = io.StringIO()
-    with redirect_stdout(out_buf):
-        classified = classify_linked_files(config, device, folder)
-
-    for line in out_buf.getvalue().splitlines():
-        if line.strip():
-            log_callback(line)
-
-    main = get_main_device(config)
-
-    def take(keys):
-        files = []
-        for k in keys:
-            if k in classified:
-                v = classified[k]
-                files.extend(sorted(v) if isinstance(v, (set, list)) else [])
-        return sorted(files)
-
-    report = {
-        "NEW (main)": take([(NEW, main)]),
-        "NEW (device)": take([(NEW, device)]),
-        "CHANGED (main)": take([(CHANGED, main)]),
-        "CHANGED (device)": take([(CHANGED, device)]),
-        "DELETED (main)": take([(DELETE, main)]),
-        "DELETED (device)": take([(DELETE, device)]),
-        "CONFLICTS": take([CONFLICT]),
-        "UNCLASSIFIED": take([NOT_CLASSIFIED]),
-    }
-
-    if mode == MODE_SYNC:
-        _do_sync(config, device, folder, classified, main, log_callback)
-
-    return report, config, None
+import io
+from contextlib import redirect_stdout
 
 
-def _do_sync(config, device, folder, classified, main, log_callback):
-    """Execute all sync operations non-interactively."""
+def _do_sync(config, device, folder, classified, main):
+    """Execute all sync operations."""
 
     def batch(label, fn, device_from, device_to, keys):
         for key in keys:
             if key in classified and classified[key]:
-                log_callback(f"{label}: {len(classified[key])} file(s)")
+                file_count = len(classified[key])
+                msg = f"{label}: {file_count} file(s)"
+                # Ask for confirmation before proceeding
+                # log_callback(msg)
+                print(msg)
                 with redirect_stdout(io.StringIO()):
                     fn(config, device_from, device_to, folder, classified, DEVICES_DEFAULT_PATH)
                 break
 
-    batch("Transferring new files (main→device)", add_new_files, main, device, [(NEW, main)])
-    batch("Transferring new files (device→main)", add_new_files, device, main, [(NEW, device)])
-    batch("Updating changed (main→device)", update_changed_files, main, device, [(CHANGED, main)])
-    batch("Updating changed (device→main)", update_changed_files, device, main, [(CHANGED, device)])
-    batch("Removing deleted (main→device)", remove_deleted_files, main, device, [(DELETE, main)])
-    batch("Removing deleted (device→main)", remove_deleted_files, device, main, [(DELETE, device)])
+    # Run batch operations with confirmation checks
+    batch(f"Transferring new files ({main}→{device})", add_new_files, main, device, [(NEW, main)])
+    batch(f"Transferring new files ({device}→{main})", add_new_files, device, main, [(NEW, device)])
+    batch(f"Updating changed ({main}→{device})", update_changed_files, main, device, [(CHANGED, main)])
+    batch(f"Updating changed ({device}→{main})", update_changed_files, device, main, [(CHANGED, device)])
+    batch(f"Removing deleted ({main}→{device})", remove_deleted_files, main, device, [(DELETE, main)])
+    batch(f"Removing deleted ({device}→{main})", remove_deleted_files, device, main, [(DELETE, device)])
 
     conflicted = classified.get(CONFLICT, set())
     if conflicted:
-        log_callback(f"Solving {len(conflicted)} conflicts")
+        conflict_msg = f"Solving {len(conflicted)} conflicts"
+        print(conflict_msg)
         append_conflicted_files(config, device, folder, classified, DEVICES_DEFAULT_PATH)
         duplicate_conflicted_files(config, device, folder, classified, DEVICES_DEFAULT_PATH)
 
     config = update_sync_time(config, device=device, folder=folder)
     save_config_debug(config)
+    return config
 
 
 def list_folders(config, device_names) -> list:

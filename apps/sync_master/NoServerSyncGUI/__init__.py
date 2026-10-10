@@ -16,5 +16,4 @@ __all__ = [
     "add_device",
     "list_folders",
     "add_folder",
-    "run_sync_report",
 ]

@@ -183,18 +183,23 @@ FOLDER_TRACKING_ADDED = "Folder tracking added"
 FOLDER_NOT_REACHABLE = "Folder not reachable"
 
 
+def create_symlink_to_folder(true_path, devices_symlink_path, device_name, folder_name):
+    # creates a symlink of the subfolder inside the device's folder
+    symlink = Path(f"{devices_symlink_path}/{device_name}/{folder_name}")
+    if not symlink.exists(): symlink.symlink_to(true_path, target_is_directory=True)
+
+
 def add_tracking_to_folder(config, device_name, relative_path, direction, append_strategy_to_file_endings,
                            devices_symlink_path=DEVICES_DEFAULT_PATH):
     device = config[CONFIG_DEVICES_KEY_NAME][device_name]
     path = f"{device["path"]}/{relative_path}"
     folder_name = path.split("/")[-1]
     if os.path.exists(path):
+        create_symlink_to_folder(path, devices_symlink_path, device_name, folder_name)
+
         if folder_name in device["tracked_folders"]:
             return FOLDER_TRACKING_ALREADY_ADDED, config  # no change on device
         else:
-            # creates a symlink of the subfolder inside the device's folder
-            symlink = Path(f"{devices_symlink_path}/{device_name}/{folder_name}")
-            if not symlink.exists(): symlink.symlink_to(path, target_is_directory=True)
 
             config[CONFIG_DEVICES_KEY_NAME][device_name]["tracked_folders"].append(folder_name)  # relative_path
             if folder_name not in config[CONFIG_FOLDERS_KEY_NAME]:
@@ -316,15 +321,16 @@ def diff_between_files(config, device: str, folder: str, rpath, devices_symlink_
 def classify_linked_files(config, device: str, folder: str, devices_symlink_path=DEVICES_DEFAULT_PATH) -> Dict[
     Union[str, Tuple[str, str]], Set]:
     main_device = get_main_device(config)
+
     # last_sync is on main device time tmd
     last_sync = (config[CONFIG_FOLDERS_KEY_NAME].get(folder, dict())
                  .get("devices_sync", dict()).get(device, NEVER))
     t_diff = get_devices_time_difference(config, device, folder, devices_symlink_path)
     last_sync_d = last_sync + t_diff
-    classified_files = defaultdict(set)
 
     files_info_main_device = get_tracked_files_info(config, main_device, folder, devices_symlink_path)
     files_info_device = get_tracked_files_info(config, device, folder, devices_symlink_path)
+    classified_files = defaultdict(set)
     for rpath in tqdm(itertools.chain(files_info_main_device.keys(), files_info_device.keys()),
                       desc="Classifying linked files..."):
         mtime_md = files_info_main_device.get(rpath, NO_FILE)
