@@ -199,66 +199,38 @@ def _do_sync(config, device, folder, classified, main):
     return config
 
 
-def list_folders(config, device_names) -> list:
-    """Folders shared between devices, aggregated by folder name."""
+def list_folders(config, device_names, selected_device=None) -> list:
+    """Folders shared between the main device and the selected secondary device."""
     try:
         main = get_main_device(config)
     except Exception as e:
-        print(f"[BACKEND] list_folders() error getting main device: {e}")
         return []
 
-    # Group folders by name, collecting all devices that track each folder
-    folder_devices_map = {}  # folder_name -> list of device info dicts
+    if not main or not selected_device or main == selected_device:
+        return []
 
-    for dev_name in device_names:
-        if dev_name not in config[CONFIG_DEVICES_KEY_NAME]:
-            continue
+    main_config = config.get(CONFIG_DEVICES_KEY_NAME, {}).get(main, {})
+    main_folders = set(main_config.get("tracked_folders", []))
 
-        dev_config = config[CONFIG_DEVICES_KEY_NAME][dev_name]
-        for folder in dev_config.get("tracked_folders", []):
-            if folder not in folder_devices_map:
-                folder_devices_map[folder] = []
+    sel_config = config.get(CONFIG_DEVICES_KEY_NAME, {}).get(selected_device, {})
+    sel_folders = set(sel_config.get("tracked_folders", []))
 
-            folder_devices_map[folder].append({
-                "name": dev_name,
-                "direction": config.get("tracked_folders", {}).get(folder, {})
-                .get("devices_direction", {}).get(dev_name, "bidirectional"),
-                "last_sync": config.get("tracked_folders", {}).get(folder, {})
-                .get("devices_sync", {}).get(dev_name, None),
-                "connected": Path(dev_config["path"]).exists(),
-            })
+    # Find folders shared between main and the selected device
+    shared_folders = main_folders.intersection(sel_folders)
 
-    # Build rows from aggregated data
     folders = []
-    for folder_name, device_infos in folder_devices_map.items():
-        # Determine subtitle and detail based on how many devices track this folder
-        if len(device_infos) == 1:
-            dev = device_infos[0]
-            subtitle = f"{dev['direction']} — on {dev['name']}"
-            detail = {"devices": dev['name'], "direction": dev['direction']}
-            badge = None if dev["connected"] else "offline"
-        else:
-            # Multiple devices tracking same folder
-            connected_devs = [d["name"] for d in device_infos if d["connected"]]
-            directions = set(d["direction"] for d in device_infos)
-            subtitle = f"{', '.join(connected_devs)} ({len(connected_devs)}/{len(device_infos)})"
-            detail = {"devices": ", ".join(connected_devs),
-                      "direction": "mixed" if len(directions) > 1 else list(directions)[0]}
-            badge = f"{len(connected_devs)}/{len(device_infos)} online"
-
-        folder_config = config.get("tracked_folders", {}).get(folder_name, {})
-        folder_icon = folder_config.get("icon", "folder")  # Default to "folder"
+    tracked_settings = config.get("tracked_folders", {})
+    for folder_name in shared_folders:
+        folder_config = tracked_settings.get(folder_name, {})
+        folder_icon = folder_config.get("icon", "folder")
 
         row = {
             "name": folder_name,
-            "subtitle": subtitle,
-            "detail": detail,
-            "badge": badge,
-            "icon": folder_icon,  # NEW: Include icon in row data
-            "devices": device_infos,  # Store for later use if needed
+            "subtitle": f"Shared between {main} and {selected_device}",
+            "detail": {"devices": f"{main}, {selected_device}"},
+            "badge": "Shared",
+            "icon": folder_icon,
         }
-
         folders.append(row)
 
-    print(f"[BACKEND] list_folders() returning {len(folders)} folders: {[f['name'] for f in folders]}")
     return folders

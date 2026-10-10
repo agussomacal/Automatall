@@ -23,6 +23,34 @@ class MainWindow(Gtk.ApplicationWindow):
         self._build_ui()
         self.refresh_all()
 
+        # Add this inside MainWindow._build_ui or __init__
+        css_provider = Gtk.CssProvider()
+        #
+        #         background-color: rgba(53, 132, 228, 0.12); /* Nice transparent blue matching the full width */
+        #         border-bottom: 1px solid rgba(53, 132, 228, 0.2);
+        #
+        css_provider.load_from_data(b"""
+            /* Make the row itself styled with transparent blue for the main device */
+            .main-device {
+                color: rgba(53, 132, 228, 0.8); /* Green for selected device */
+                font-weight: bold;
+                background-color: rgba(53, 132, 228, 0.12); /* Nice transparent blue matching the full width */
+            }
+            .connected-badge {
+                color: #f5c211; /* Yellow for online devices */
+                font-weight: bold;
+            }
+            .selected-badge {
+                color: #2ec27e; /* Green for selected device */
+                font-weight: bold;
+            }
+        """)
+        Gtk.StyleContext.add_provider_for_display(
+            Gdk.Display.get_default(),
+            css_provider,
+            Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
+        )
+
     def _build_ui(self):
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
 
@@ -126,20 +154,71 @@ class MainWindow(Gtk.ApplicationWindow):
         from . import backend
         devices = backend.list_devices(self.get_config())
         names = [d["name"] for d in devices]
-        rows = backend.list_folders(self.get_config(), names)
+        rows = backend.list_folders(self.get_config(), names, self._selected_device)
         self._fill_list_folders(self.folders_list, rows)
 
     def _fill_list_devices(self, listbox, rows):
         self._clear_listbox(listbox)
-        for row_data in rows:
+
+        # Sort so main device is at the very top
+        rows_sorted = sorted(rows, key=lambda d: not d.get("is_main", False))
+
+        for row_data in rows_sorted:
+            is_main = row_data.get("is_main", False)
+            connected = row_data.get("connected", False)
+            is_selected = (row_data["name"] == self._selected_device)
+
             box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12,
-                          margin_top=6, margin_bottom=6, margin_start=12, margin_end=12)
+                          margin_top=8, margin_bottom=8,
+                          margin_start=12, margin_end=12)
+
+            # Create and add the icon image using row_data["icon"]
+            device_type = row_data.get("type", "COMPUTER").upper()
+
+            if device_type == "COMPUTER":
+                icon_name = "computer-symbolic"
+            elif device_type == "USB":
+                icon_name = "media-removable-symbolic"
+            elif device_type == "DRIVE":
+                icon_name = "drive-harddisk-symbolic"
+            elif device_type in ("PHONE", "IPAD"):
+                icon_name = "phone-symbolic"
+            else:
+                icon_name = "computer-symbolic"  # fallback icon
+
+            icon = Gtk.Image(icon_name=icon_name)
+            box.append(icon)
+
             label = Gtk.Label(label=row_data["name"], halign=Gtk.Align.START)
             sub = Gtk.Label(label=row_data["subtitle"], halign=Gtk.Align.START, css_classes=["dim-label"])
             box.append(label)
             box.append(sub)
+
+            spacer = Gtk.Box()
+            spacer.set_hexpand(True)
+            box.append(spacer)
+
+            if is_main:
+                main_badge = Gtk.Label(label="MAIN DEVICE", css_classes=["main-device"])
+                box.append(main_badge)
+            elif is_selected and connected:
+                sel_badge = Gtk.Label(label="Selected to Sync", css_classes=["selected-badge"])
+                box.append(sel_badge)
+            elif connected:
+                online_badge = Gtk.Label(label="Connected", css_classes=["connected-badge"])
+                box.append(online_badge)
+            else:
+                offline_badge = Gtk.Label(label="Offline", css_classes=["dim-label"])
+                box.append(offline_badge)
+
             row = Gtk.ListBoxRow(child=box)
             row.row_data = row_data
+
+            if is_main:
+                row.get_style_context().add_class("main-device")
+                row.set_selectable(False)
+                row.set_activatable(False)
+
             listbox.append(row)
 
     def _fill_list_folders(self, listbox, rows):
@@ -147,6 +226,12 @@ class MainWindow(Gtk.ApplicationWindow):
         for row_data in rows:
             box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12,
                           margin_top=6, margin_bottom=6, margin_start=12, margin_end=12)
+
+            # Create and add the icon image using row_data["icon"]
+            icon_name = row_data.get("icon", "folder-symbolic")  # fallback to folder if missing
+            icon = Gtk.Image(icon_name=icon_name)
+            box.append(icon)
+
             label = Gtk.Label(label=row_data["name"], halign=Gtk.Align.START, css_classes=["heading"])
             sub = Gtk.Label(label=row_data["subtitle"], halign=Gtk.Align.START, css_classes=["dim-label"])
             box.append(label)
@@ -173,6 +258,9 @@ class MainWindow(Gtk.ApplicationWindow):
         if row is None:
             return
         data = row.row_data
+        if data.get("is_main", False):
+            return  # Main device is always implicitly part of sync operations
+
         self._selected_device = data["name"]
         self.refresh_folders()
 
