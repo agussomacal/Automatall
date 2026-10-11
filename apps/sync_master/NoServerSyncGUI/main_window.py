@@ -18,31 +18,26 @@ class MainWindow(Gtk.ApplicationWindow):
         super().__init__(title=APP_NAME, default_width=1100, default_height=800, **kwargs)
         self._selected_device = None
         self._selected_folder = None
-        self._last_report = None
-        self._classified = None
-        self._current_device = None
+        self._folder_sync_cache = {}  # Stores {folder_name: {"report": ..., "classified": ..., "has_changes": bool}}
+        self._checking_folders = set()  # Tracks which folders are actively running checks
+        self._just_synced_folders = set()  # Track folders that were just synced
         self._build_ui()
         self.refresh_all()
 
-        # Add this inside MainWindow._build_ui or __init__
         css_provider = Gtk.CssProvider()
-        #
-        #         background-color: rgba(53, 132, 228, 0.12); /* Nice transparent blue matching the full width */
-        #         border-bottom: 1px solid rgba(53, 132, 228, 0.2);
-        #
         css_provider.load_from_data(b"""
             /* Make the row itself styled with transparent blue for the main device */
             .main-device {
-                color: rgba(53, 132, 228, 0.8); /* Green for selected device */
+                color: rgba(53, 132, 228, 0.8);
                 font-weight: bold;
-                background-color: rgba(53, 132, 228, 0.12); /* Nice transparent blue matching the full width */
+                background-color: rgba(53, 132, 228, 0.12);
             }
             .connected-badge {
-                color: #f5c211; /* Yellow for online devices */
+                color: #f5c211;
                 font-weight: bold;
             }
             .selected-badge {
-                color: #2ec27e; /* Green for selected device */
+                color: #2ec27e;
                 font-weight: bold;
             }
         """)
@@ -173,7 +168,6 @@ class MainWindow(Gtk.ApplicationWindow):
                           margin_top=8, margin_bottom=8,
                           margin_start=12, margin_end=12)
 
-            # Create and add the icon image using row_data["icon"]
             device_type = row_data.get("type", "COMPUTER").upper()
 
             if device_type == "COMPUTER":
@@ -185,7 +179,7 @@ class MainWindow(Gtk.ApplicationWindow):
             elif device_type in ("PHONE", "IPAD"):
                 icon_name = "phone-symbolic"
             else:
-                icon_name = "computer-symbolic"  # fallback icon
+                icon_name = "computer-symbolic"
 
             icon = Gtk.Image(icon_name=icon_name)
             box.append(icon)
@@ -225,18 +219,42 @@ class MainWindow(Gtk.ApplicationWindow):
     def _fill_list_folders(self, listbox, rows):
         self._clear_listbox(listbox)
         for row_data in rows:
+            folder_name = row_data["name"]
+
             box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12,
                           margin_top=6, margin_bottom=6, margin_start=12, margin_end=12)
 
-            # Create and add the icon image using row_data["icon"]
-            icon_name = row_data.get("icon", "folder-symbolic")  # fallback to folder if missing
+            icon_name = row_data.get("icon", "folder-symbolic")
             icon = Gtk.Image(icon_name=icon_name)
             box.append(icon)
 
-            label = Gtk.Label(label=row_data["name"], halign=Gtk.Align.START, css_classes=["heading"])
+            label = Gtk.Label(label=folder_name, halign=Gtk.Align.START, css_classes=["heading"])
             sub = Gtk.Label(label=row_data["subtitle"], halign=Gtk.Align.START, css_classes=["dim-label"])
             box.append(label)
             box.append(sub)
+
+            spacer = Gtk.Box()
+            spacer.set_hexpand(True)
+            box.append(spacer)
+
+            # Dynamic badges or sync action buttons per folder tile
+            if folder_name in self._just_synced_folders:
+                synced_badge = Gtk.Label(label="Just synced",
+                                         css_classes=["connected-badge"])  # Using yellow/online style or custom
+                box.append(synced_badge)
+            elif folder_name in self._checking_folders:
+                badge = Gtk.Label(label="Checking differences...", css_classes=["dim-label"])
+                box.append(badge)
+            elif folder_name in self._folder_sync_cache:
+                cache_entry = self._folder_sync_cache[folder_name]
+                if cache_entry["has_changes"]:
+                    sync_btn = Gtk.Button(label="Do Sync", css_classes=["suggested-action"])
+                    sync_btn.connect("clicked", lambda _, f=folder_name: self._open_sync_for_folder(f))
+                    box.append(sync_btn)
+                else:
+                    badge = Gtk.Label(label="Nothing new to sync", css_classes=["dim-label"])
+                    box.append(badge)
+
             row = Gtk.ListBoxRow(child=box)
             row.row_data = row_data
             listbox.append(row)
@@ -260,75 +278,125 @@ class MainWindow(Gtk.ApplicationWindow):
             return
         data = row.row_data
         if data.get("is_main", False):
-            return  # Main device is always implicitly part of sync operations
+            return
 
         self._selected_device = data["name"]
+        # Clear cache when changing devices
+        self._folder_sync_cache.clear()
+        self._checking_folders.clear()
+        self._just_synced_folders.clear()
         self.refresh_folders()
+        if data.get("connected", False):
+            self.btn_check.set_sensitive(True)
 
     def on_folder_selected(self, listbox, row):
         if row is None:
             self._selected_folder = None
-            self.btn_check.set_sensitive(False)
             return
         data = row.row_data
         self._selected_folder = data["name"]
-        self.btn_check.set_sensitive(True)
 
     def run_check_diff(self):
         from . import backend
-        from noserversync.synclib import get_connected_devices
-        if not self._selected_folder:
+        from noserversync.synclib import get_connected_devices, classify_linked_files, NEW, CHANGED, DELETE
+
+        if not self._selected_device:
             return
 
         config = self.get_config()
         device_list = get_connected_devices(config)
         if not device_list:
             return
-        main = backend.get_main_device(config)
-        self._current_device = device_list[0]
 
+        main = backend.get_main_device(config)
+        target_device = self._selected_device
+
+        # Get all shared folders for this device
+        folders = backend.list_folders(config, [target_device], target_device)
+        folder_names = [f["name"] for f in folders]
+
+        if not folder_names:
+            return
+
+        # Mark all folders as checking
+        for fname in folder_names:
+            self._checking_folders.add(fname)
+
+        self.refresh_folders()
         self.spinner.start()
         self.btn_check.set_sensitive(False)
 
         def worker():
-            from noserversync.synclib import classify_linked_files, NEW, CHANGED, DELETE
-            classified = classify_linked_files(config, self._current_device, self._selected_folder)
+            for folder_name in folder_names:
+                classified = classify_linked_files(config, target_device, folder_name)
 
-            def take(keys):
-                files = []
-                for k in keys:
-                    if k in classified:
-                        v = classified[k]
-                        files.extend(sorted(v) if isinstance(v, (set, list)) else [])
-                return sorted(files)
+                def take(keys):
+                    files = []
+                    for k in keys:
+                        if k in classified:
+                            v = classified[k]
+                            files.extend(sorted(v) if isinstance(v, (set, list)) else [])
+                    return sorted(files)
 
-            report = {
-                f"New files ({main} → {self._current_device})": take([(NEW, main)]),
-                f"New files ({self._current_device} → {main})": take([(NEW, self._current_device)]),
-                f"Changed files ({main} → {self._current_device})": take([(CHANGED, main)]),
-                f"Changed files ({self._current_device} → {main})": take([(CHANGED, self._current_device)]),
-                f"Deleted files ({main} → {self._current_device})": take([(DELETE, main)]),
-                f"Deleted files ({self._current_device} → {main})": take([(DELETE, self._current_device)]),
-            }
-            GLib.idle_add(self._open_sync_window, report, classified, config, main)
+                report = {
+                    f"New files ({main} → {target_device})": take([(NEW, main)]),
+                    f"New files ({target_device} → {main})": take([(NEW, target_device)]),
+                    f"Changed files ({main} → {target_device})": take([(CHANGED, main)]),
+                    f"Changed files ({target_device} → {main})": take([(CHANGED, target_device)]),
+                    f"Deleted files ({main} → {target_device})": take([(DELETE, main)]),
+                    f"Deleted files ({target_device} → {main})": take([(DELETE, target_device)]),
+                }
+
+                has_any = any(len(files) > 0 for files in report.values())
+
+                # Store result in cache via main thread idle loop
+                GLib.idle_add(self._store_folder_cache, folder_name, {
+                    "report": report,
+                    "classified": classified,
+                    "main": main,
+                    "device": target_device,
+                    "has_changes": has_any
+                })
+
+            GLib.idle_add(self._finish_checking)
 
         threading.Thread(target=worker, daemon=True).start()
 
-    def _open_sync_window(self, report, classified, config, main):
+    def _store_folder_cache(self, folder_name, data):
+        self._checking_folders.discard(folder_name)
+        self._folder_sync_cache[folder_name] = data
+        self.refresh_folders()
+        return GLib.SOURCE_REMOVE
+
+    def _finish_checking(self):
         self.spinner.stop()
         self.btn_check.set_sensitive(True)
+        self.refresh_folders()
+        return GLib.SOURCE_REMOVE
+
+    def _open_sync_for_folder(self, folder_name):
+        cache_data = self._folder_sync_cache.get(folder_name)
+        if not cache_data:
+            return
 
         sync_win = SyncWindow(
             parent=self,
-            config=config,
-            device=self._current_device,
-            folder=self._selected_folder,
-            classified=classified,
-            report=report,
-            main=main
+            config=self.get_config(),
+            device=cache_data["device"],
+            folder=folder_name,
+            classified=cache_data["classified"],
+            report=cache_data["report"],
+            main=cache_data["main"],
+            on_synced_callback=self._on_folder_synced
         )
         sync_win.present()
-        return GLib.SOURCE_REMOVE
+
+    def _on_folder_synced(self, folder_name):
+        # Remove from cache so the sync button goes away and show 'Just synced' badge
+        if folder_name in self._folder_sync_cache:
+            del self._folder_sync_cache[folder_name]
+        self._just_synced_folders.add(folder_name)
+        self.refresh_folders()
 
     def on_add_device(self):
         from . import backend
@@ -364,7 +432,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
 
 class SyncWindow(Gtk.Window):
-    def __init__(self, parent, config, device, folder, classified, report, main):
+    def __init__(self, parent, config, device, folder, classified, report, main, on_synced_callback=None):
         super().__init__(title="Sync Decisions & Differences", transient_for=parent, modal=True)
         self.set_default_size(700, 600)
 
@@ -374,6 +442,7 @@ class SyncWindow(Gtk.Window):
         self.classified = classified
         self.report = report
         self.main = main
+        self.on_synced_callback = on_synced_callback
 
         self.decisions = {}
         self.category_labels_map = {}
@@ -422,7 +491,6 @@ class SyncWindow(Gtk.Window):
                 header.append(btn_manual)
                 card.append(header)
 
-                # File list label mapped for live color updates
                 files_lbl = Gtk.Label(halign=Gtk.Align.START, margin_start=16, margin_bottom=8,
                                       css_classes=["dim-label"])
                 self.category_labels_map[category] = files_lbl
@@ -474,7 +542,6 @@ class SyncWindow(Gtk.Window):
         else:
             self._update_category_display(category)
 
-        # Check sensitivity: all categories must have a non-SKIP choice
         all_decided = all(val != SKIP for val in self.decisions.values()) and len(self.decisions) > 0
         self.btn_do_sync.set_sensitive(all_decided)
 
@@ -544,6 +611,9 @@ class SyncWindow(Gtk.Window):
                 _do_sync(self.config, self.device, self.folder, filtered_classified, self.main)
             self.config = update_sync_time(self.config, device=self.device, folder=self.folder)
             save_config(self.config)
+
+        if self.on_synced_callback:
+            self.on_synced_callback(self.folder)
 
         self.destroy()
 
