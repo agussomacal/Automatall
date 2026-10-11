@@ -1,5 +1,6 @@
 import threading
-from gi.repository import Gtk, GLib, Gdk, Gio, Adw, Pango
+
+from gi.repository import Gtk, GLib, Gdk, Gio, Pango
 
 from .backend import _do_sync
 from .dialogs import AddDeviceDialog, AddFolderDialog
@@ -275,7 +276,7 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def run_check_diff(self):
         from . import backend
-        from NoServerSync.synclib import get_connected_devices
+        from noserversync.synclib import get_connected_devices
         if not self._selected_folder:
             return
 
@@ -290,7 +291,7 @@ class MainWindow(Gtk.ApplicationWindow):
         self.btn_check.set_sensitive(False)
 
         def worker():
-            from NoServerSync.synclib import classify_linked_files, NEW, CHANGED, DELETE
+            from noserversync.synclib import classify_linked_files, NEW, CHANGED, DELETE
             classified = classify_linked_files(config, self._current_device, self._selected_folder)
 
             def take(keys):
@@ -346,7 +347,6 @@ class MainWindow(Gtk.ApplicationWindow):
         dlg.destroy()
 
     def on_add_folder(self):
-        from . import backend
         if not self._selected_device:
             return
         dlg = AddFolderDialog(self, device_name=self._selected_device, config=self.get_config())
@@ -511,9 +511,8 @@ class SyncWindow(Gtk.Window):
         label_widget.set_markup("\n".join(file_lines))
 
     def _execute_sync_decisions(self, btn):
-        from NoServerSync.synclib import (
-            add_new_files, update_changed_files, remove_deleted_files,
-            DEVICES_DEFAULT_PATH, update_sync_time, save_config
+        from noserversync.synclib import (
+            update_sync_time, save_config
         )
         import io
         from contextlib import redirect_stdout

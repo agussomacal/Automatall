@@ -1,0 +1,11 @@
+[project]
+name = "sync_master"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "NoServerSync",
+]
+
+[tool.uv.sources]
+# Explicitly force this package to come from Git with the exact revision
+NoServerSync = { git = "https://codeberg.org/akuasoma/NoServerSync", rev = "2a22a0b25151043ef86a53b20a44530fb8396b34" }

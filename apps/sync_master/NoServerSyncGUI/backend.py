@@ -3,29 +3,20 @@ GUI backend bridge: wraps synclib/cmd_frontend functionality without
 modifying them. Captures stdout (tqdm / prints) and routes it to a callback.
 """
 import os
-import sys
 from pathlib import Path
 
-from apps.sync_master.NoServerSync.synclib import CONFIG_FOLDERS_KEY_NAME
-
-# Ensure the original NoServerSync module is importable
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from NoServerSync.synclib import (
-    CONFIG_PATH, CONFIG_DEVICES_KEY_NAME, CONFIG_SYNC_KEY_NAME, DEVICES_DEFAULT_PATH,
+from noserversync.synclib import CONFIG_FOLDERS_KEY_NAME
+from noserversync.synclib import (
+    CONFIG_PATH, CONFIG_DEVICES_KEY_NAME, DEVICES_DEFAULT_PATH,
     load_config as _load_config, save_config, set_main_device,
-    get_main_device, get_connected_devices, classify_linked_files,
-    add_tracking_to_folder, add_sync_folder_settings, FOLDER_SETTINGS,
-    DEVICE_TYPES, DEVICE_DIRECTIONS, BIDIRECTIONAL,
+    get_main_device, add_tracking_to_folder, add_sync_folder_settings, FOLDER_SETTINGS,
     init_sync_tracker,
-    NEW, CHANGED, DELETE, CONFLICT, UNCHANGED, NOT_CLASSIFIED,
-    get_folder_root,
-    add_new_files, update_changed_files, remove_deleted_files,
+    NEW, CHANGED, DELETE, CONFLICT, add_new_files, update_changed_files, remove_deleted_files,
     append_conflicted_files, duplicate_conflicted_files,
     update_sync_time,
 )
-from NoServerSync.synclib import add_device as _add_device
-from NoServerSync.synclib import get_main_device as _get_main_device
+from noserversync.synclib import add_device as _add_device
+from noserversync.synclib import get_main_device as _get_main_device
 
 MODE_DIFF = "diff"
 MODE_SYNC = "sync"

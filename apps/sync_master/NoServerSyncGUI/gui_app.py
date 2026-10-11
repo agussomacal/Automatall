@@ -1,13 +1,7 @@
-import sys
-from pathlib import Path
+from gi.repository import Gtk, Gio
 
-# Ensure parent dir is in path for NoServerSync module
-sys.path.insert(0, str(Path(__file__).parent.parent))
-
-from gi.repository import Gtk, Adw, Gio, GLib
-
-from .main_window import MainWindow
 from .backend import load_config as _load_config
+from .main_window import MainWindow
 
 
 class NoServerSyncGUIApp(Gtk.Application):

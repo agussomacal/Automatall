@@ -1,4 +1,4 @@
-"""NoServerSyncGUI package - GTK4 frontend for NoServerSync."""
+"""NoServerSyncGUI package - GTK4 frontend for noserversync."""
 __version__ = "0.1.0"
 
 from .gui_app import NoServerSyncGUIApp

@@ -1,10 +1,8 @@
 import os
 
-from NoServerSync.synclib import CONFIG_DEVICES_KEY_NAME
+from noserversync.synclib import CONFIG_DEVICES_KEY_NAME, DEVICE_TYPES, DEVICE_DIRECTIONS
 from gi.overrides.Gio import Gio
 from gi.repository import Gtk, Adw
-
-from .backend import DEVICE_TYPES, DEVICE_DIRECTIONS
 
 OK = "ok"
 
