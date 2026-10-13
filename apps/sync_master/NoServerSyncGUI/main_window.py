@@ -2,6 +2,7 @@ import threading
 from pathlib import Path
 
 from gi.repository import Gtk, GLib, Gdk, Gio, Pango
+from noserversync.synclib import do_sync
 from tqdm import tqdm
 
 from .backend import _do_sync
@@ -463,7 +464,7 @@ class MainWindow(Gtk.ApplicationWindow):
 class SyncWindow(Gtk.Window):
     def __init__(self, parent, config, device, folder, classified, report, main, on_synced_callback=None):
         super().__init__(title="Sync Decisions & Differences", transient_for=parent, modal=True)
-        self.set_default_size(700, 600)
+        self.set_default_size(700, 650)
 
         self.config = config
         self.device = device
@@ -474,7 +475,7 @@ class SyncWindow(Gtk.Window):
         self.on_synced_callback = on_synced_callback
 
         self.decisions = {}
-        self.category_labels_map = {}
+        self.category_lists_map = {}  # Stores the listboxes to rebuild file rows dynamically
         self.manual_overrides = {}
 
         self._build_ui()
@@ -487,6 +488,7 @@ class SyncWindow(Gtk.Window):
         title_lbl.set_halign(Gtk.Align.START)
         main_box.append(title_lbl)
 
+        # Outer scroll window for all categories
         scroller = Gtk.ScrolledWindow(vexpand=True, hexpand=True)
         vbox_categories = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12)
 
@@ -520,12 +522,19 @@ class SyncWindow(Gtk.Window):
                 header.append(btn_manual)
                 card.append(header)
 
-                files_lbl = Gtk.Label(halign=Gtk.Align.START, margin_start=16, margin_bottom=8,
-                                      css_classes=["dim-label"])
-                self.category_labels_map[category] = files_lbl
+                # Inner ScrolledWindow for each category file list to prevent full window overflow
+                file_scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
+                file_scroller.set_min_content_height(100)
+                file_scroller.set_max_content_height(180)
+                file_scroller.set_propagate_natural_height(True)
+
+                file_listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE, css_classes=["boxed-list"])
+                file_scroller.set_child(file_listbox)
+
+                self.category_lists_map[category] = file_listbox
                 self._update_category_display(category)
 
-                card.append(files_lbl)
+                card.append(file_scroller)
                 vbox_categories.append(card)
 
         if not has_any:
@@ -534,9 +543,15 @@ class SyncWindow(Gtk.Window):
         scroller.set_child(vbox_categories)
         main_box.append(scroller)
 
+        # Footer box with Spinner and Sync Button
         footer_box = Gtk.Box(spacing=12, halign=Gtk.Align.END, margin_top=12)
+
+        self.sync_spinner = Gtk.Spinner(spinning=False)
+        footer_box.append(self.sync_spinner)
+
         close_btn = Gtk.Button(label="Cancel")
         close_btn.connect("clicked", lambda *_: self.destroy())
+        self.close_btn = close_btn
 
         self.btn_do_sync = Gtk.Button(label="Do Sync", css_classes=["suggested-action"])
         self.btn_do_sync.connect("clicked", self._execute_sync_decisions)
@@ -573,9 +588,6 @@ class SyncWindow(Gtk.Window):
 
         all_decided = all(val != SKIP for val in self.decisions.values()) and len(self.decisions) > 0
         self.btn_do_sync.set_sensitive(all_decided)
-        print(self.decisions.keys())
-        print(self.decisions.values())
-        print(all_decided)
 
     def _store_manual_decisions(self, category, approved_files):
         self.manual_overrides[category] = set(approved_files)
@@ -586,68 +598,102 @@ class SyncWindow(Gtk.Window):
         self.btn_do_sync.set_sensitive(all_decided)
 
     def _update_category_display(self, target_category):
-        label_widget = self.category_labels_map.get(target_category)
-        if not label_widget:
+        listbox = self.category_lists_map.get(target_category)
+        if not listbox:
             return
+
+        # Clear existing rows in the listbox
+        child = listbox.get_first_child()
+        while child is not None:
+            nxt = child.get_next_sibling()
+            listbox.remove(child)
+            child = nxt
 
         files = self.report.get(target_category, [])
         choice = self.decisions.get(target_category, SKIP)
+        approved_set = self.manual_overrides.get(target_category, set())
 
-        file_lines = []
-        for f in tqdm(files):
+        for f in files:
+            row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
+                              margin_top=4, margin_bottom=4, margin_start=8, margin_end=8)
+
+            # File icon like SyncFileTile
+            icon = Gtk.Image(icon_name="text-x-generic")
+            icon.set_valign(Gtk.Align.CENTER)
+            row_box.append(icon)
+
+            filename = f.split("/")[-1]
+            label = Gtk.Label(label=filename, xalign=0)
+            label.set_hexpand(True)
+            label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+            row_box.append(label)
+
+            # Determine sync status and color styling per file row
+            status_label = Gtk.Label()
             if choice == ACCEPT:
-                file_lines.append(f"<span color='green'> • {f} (to sync)</span>")
+                status_label.set_markup("<span color='green'>to sync</span>")
             elif choice == MANUAL_CUSTOM:
-                approved_set = self.manual_overrides.get(target_category, set())
                 if f in approved_set:
-                    file_lines.append(f"<span color='green'> • {f} (to sync)</span>")
+                    status_label.set_markup("<span color='green'>to sync</span>")
                 else:
-                    file_lines.append(f"<span color='red'> • {f} (to skip)</span>")
+                    status_label.set_markup("<span color='red'>to skip</span>")
             else:
-                file_lines.append(f"<span color='gray'> • {f} (to skip)</span>")
+                status_label.set_markup("<span color='gray'>to skip</span>")
 
-        label_widget.set_use_markup(True)
-        label_widget.set_markup("\n".join(file_lines))
+            row_box.append(status_label)
+
+            row = Gtk.ListBoxRow(child=row_box)
+            listbox.append(row)
 
     def _execute_sync_decisions(self, btn):
-        from noserversync.synclib import (
-            update_sync_time, save_config
-        )
-        import io
-        from contextlib import redirect_stdout
+        self.btn_do_sync.set_sensitive(False)
+        self.close_btn.set_sensitive(False)
+        self.sync_spinner.start()
 
-        with redirect_stdout(io.StringIO()):
-            for category, choice in self.decisions.items():
-                if choice == SKIP or not choice:
-                    continue
+        def worker():
+            from noserversync.synclib import update_sync_time, save_config
+            import io
+            from contextlib import redirect_stdout
 
-                allowed_files = set()
-                if choice == ACCEPT:
-                    allowed_files = set(self.report.get(category, []))
-                elif choice == MANUAL_CUSTOM:
-                    allowed_files = self.manual_overrides.get(category, set())
+            with redirect_stdout(io.StringIO()):
+                for category, choice in self.decisions.items():
+                    if choice == SKIP or not choice:
+                        continue
 
-                if not allowed_files:
-                    continue
+                    allowed_files = set()
+                    if choice == ACCEPT:
+                        allowed_files = set(self.report.get(category, []))
+                    elif choice == MANUAL_CUSTOM:
+                        allowed_files = self.manual_overrides.get(category, set())
 
-                filtered_classified = {}
-                for cat_key, file_set in self.classified.items():
-                    if isinstance(file_set, (set, list)):
-                        matched = {f for f in file_set if f in allowed_files}
-                        if matched:
-                            filtered_classified[cat_key] = matched
+                    if not allowed_files:
+                        continue
 
-                if not filtered_classified:
-                    continue
+                    filtered_classified = {}
+                    for cat_key, file_set in self.classified.items():
+                        if isinstance(file_set, (set, list)):
+                            matched = {file_item for file_item in file_set if file_item in allowed_files}
+                            if matched:
+                                filtered_classified[cat_key] = matched
 
-                _do_sync(self.config, self.device, self.folder, filtered_classified, self.main)
-            self.config = update_sync_time(self.config, device=self.device, folder=self.folder)
-            save_config(self.config)
+                    if not filtered_classified:
+                        continue
 
+                    self.config = do_sync(self.config, self.device, self.folder, filtered_classified, self.main)
+
+                self.config = update_sync_time(self.config, device=self.device, folder=self.folder)
+                save_config(self.config)
+
+            GLib.idle_add(self._finish_sync)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    def _finish_sync(self):
+        self.sync_spinner.stop()
         if self.on_synced_callback:
             self.on_synced_callback(self.folder)
-
         self.destroy()
+        return GLib.SOURCE_REMOVE
 
 
 class SyncFileTile(Gtk.Box):
