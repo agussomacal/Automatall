@@ -1,0 +1,14 @@
+/* Make the row itself styled with transparent blue for the main device */
+.main-device {
+    color: rgba(53, 132, 228, 0.8);
+    font-weight: bold;
+    background-color: rgba(53, 132, 228, 0.12);
+}
+.connected-badge {
+    color: #f5c211;
+    font-weight: bold;
+}
+.selected-badge {
+    color: #2ec27e;
+    font-weight: bold;
+}

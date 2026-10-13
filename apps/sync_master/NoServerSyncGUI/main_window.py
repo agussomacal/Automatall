@@ -1,6 +1,8 @@
 import threading
+from pathlib import Path
 
 from gi.repository import Gtk, GLib, Gdk, Gio, Pango
+from tqdm import tqdm
 
 from .backend import _do_sync
 from .dialogs import AddDeviceDialog, AddFolderDialog
@@ -25,27 +27,41 @@ class MainWindow(Gtk.ApplicationWindow):
         self.refresh_all()
 
         css_provider = Gtk.CssProvider()
-        css_provider.load_from_data(b"""
-            /* Make the row itself styled with transparent blue for the main device */
-            .main-device {
-                color: rgba(53, 132, 228, 0.8);
-                font-weight: bold;
-                background-color: rgba(53, 132, 228, 0.12);
-            }
-            .connected-badge {
-                color: #f5c211;
-                font-weight: bold;
-            }
-            .selected-badge {
-                color: #2ec27e;
-                font-weight: bold;
-            }
-        """)
+        # css_provider.load_from_data(b"""
+        #     /* Make the row itself styled with transparent blue for the main device */
+        #     .main-device {
+        #         color: rgba(53, 132, 228, 0.8);
+        #         font-weight: bold;
+        #         background-color: rgba(53, 132, 228, 0.12);
+        #     }
+        #     .connected-badge {
+        #         color: #f5c211;
+        #         font-weight: bold;
+        #     }
+        #     .selected-badge {
+        #         color: #2ec27e;
+        #         font-weight: bold;
+        #     }
+        # """)
+
+        # Get the directory where main_window.py is located
+        css_path = Path(__file__).parent / "style.css"
+        css_provider.load_from_path(str(css_path))
+
         Gtk.StyleContext.add_provider_for_display(
             Gdk.Display.get_default(),
             css_provider,
             Gtk.STYLE_PROVIDER_PRIORITY_APPLICATION
         )
+
+        # Poll for device connection changes every 5 seconds
+        GLib.timeout_add_seconds(5, self._on_device_poll_tick)
+
+    def _on_device_poll_tick(self):
+        """Called periodically by GLib to refresh devices and check connectivity."""
+        self.refresh_devices()
+        # Return True to keep the timeout active, or False to stop it.
+        return True
 
     def _build_ui(self):
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -239,12 +255,16 @@ class MainWindow(Gtk.ApplicationWindow):
 
             # Dynamic badges or sync action buttons per folder tile
             if folder_name in self._just_synced_folders:
-                synced_badge = Gtk.Label(label="Just synced",
-                                         css_classes=["connected-badge"])  # Using yellow/online style or custom
+                synced_badge = Gtk.Label(label="Just synced", css_classes=["connected-badge"])
                 box.append(synced_badge)
             elif folder_name in self._checking_folders:
-                badge = Gtk.Label(label="Checking differences...", css_classes=["dim-label"])
-                box.append(badge)
+                # Create a progress bar matching the current progress value
+                pbar = Gtk.ProgressBar()
+                # Get fraction safely, default to 0.0
+                fraction = getattr(self, "_folder_progress", {}).get(folder_name, 0.0)
+                pbar.set_fraction(fraction)
+                pbar.set_size_request(120, -1)
+                box.append(pbar)
             elif folder_name in self._folder_sync_cache:
                 cache_entry = self._folder_sync_cache[folder_name]
                 if cache_entry["has_changes"]:
@@ -311,24 +331,33 @@ class MainWindow(Gtk.ApplicationWindow):
         main = backend.get_main_device(config)
         target_device = self._selected_device
 
-        # Get all shared folders for this device
         folders = backend.list_folders(config, [target_device], target_device)
         folder_names = [f["name"] for f in folders]
 
         if not folder_names:
             return
 
-        # Mark all folders as checking
+        # Track progress fraction dictionary
+        self._folder_progress = {}
         for fname in folder_names:
             self._checking_folders.add(fname)
+            self._folder_progress[fname] = 0.0
 
         self.refresh_folders()
-        self.spinner.start()
         self.btn_check.set_sensitive(False)
 
         def worker():
             for folder_name in folder_names:
-                classified = classify_linked_files(config, target_device, folder_name)
+                def update_progress(current, total):
+                    fraction = min(max(current / float(total), 0.0), 1.0)
+                    self._folder_progress[folder_name] = fraction
+                    # Safely instruct GTK to update UI on the main thread
+                    GLib.idle_add(self.refresh_folders)
+
+                classified = classify_linked_files(
+                    config, target_device, folder_name,
+                    progress_callback=update_progress
+                )
 
                 def take(keys):
                     files = []
@@ -358,7 +387,7 @@ class MainWindow(Gtk.ApplicationWindow):
                     "has_changes": has_any
                 })
 
-            GLib.idle_add(self._finish_checking)
+                GLib.idle_add(self._finish_checking)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -544,6 +573,9 @@ class SyncWindow(Gtk.Window):
 
         all_decided = all(val != SKIP for val in self.decisions.values()) and len(self.decisions) > 0
         self.btn_do_sync.set_sensitive(all_decided)
+        print(self.decisions.keys())
+        print(self.decisions.values())
+        print(all_decided)
 
     def _store_manual_decisions(self, category, approved_files):
         self.manual_overrides[category] = set(approved_files)
@@ -562,7 +594,7 @@ class SyncWindow(Gtk.Window):
         choice = self.decisions.get(target_category, SKIP)
 
         file_lines = []
-        for f in files:
+        for f in tqdm(files):
             if choice == ACCEPT:
                 file_lines.append(f"<span color='green'> • {f} (to sync)</span>")
             elif choice == MANUAL_CUSTOM:

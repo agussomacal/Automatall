@@ -25,27 +25,3 @@ dependencies:
       pacman: "sudo pacman -S libadwaita"
       brew: "brew install libadwaita"
     version_flag: "--version"
-
-  # PyYAML for config parsing
-  - name: python-pyyaml
-    binary: python3
-    description: "YAML configuration parser"
-    optional: false
-    install_commands:
-      apt: "pip3 install pyyaml"
-      dnf: "pip3 install pyyaml"
-      pacman: "pip3 install pyyaml"
-      brew: "pip3 install pyyaml"
-    version_flag: "-c pyyaml | grep -oP 'Version: \\K[\\d.]+'"
-
-  # tqdm for progress bars (used in synclib)
-  - name: python-tqdm
-    binary: python3
-    description: "Progress bar library for sync operations"
-    optional: false
-    install_commands:
-      apt: "pip3 install tqdm"
-      dnf: "pip3 install tqdm"
-      pacman: "pip3 install tqdm"
-      brew: "pip3 install tqdm"
-    version_flag: "-c tqdm | grep -oP 'Version: \\K[\\d.]+'"
