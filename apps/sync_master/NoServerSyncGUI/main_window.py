@@ -2,10 +2,8 @@ import threading
 from pathlib import Path
 
 from gi.repository import Gtk, GLib, Gdk, Gio, Pango
-from noserversync.synclib import do_sync
-from tqdm import tqdm
+from noserversync.synclib import get_main_device
 
-from .backend import _do_sync
 from .dialogs import AddDeviceDialog, AddFolderDialog
 
 SKIP = "skip"
@@ -329,16 +327,20 @@ class MainWindow(Gtk.ApplicationWindow):
         if not device_list:
             return
 
-        main = backend.get_main_device(config)
+        main = get_main_device(config)
         target_device = self._selected_device
 
+        # Get all shared folders for this device
         folders = backend.list_folders(config, [target_device], target_device)
         folder_names = [f["name"] for f in folders]
 
         if not folder_names:
             return
 
-        # Track progress fraction dictionary
+        # Clear just_synced_folders so they get rechecked instead of ignored
+        self._just_synced_folders.clear()
+
+        # Track progress fraction dictionary and mark all folders as checking
         self._folder_progress = {}
         for fname in folder_names:
             self._checking_folders.add(fname)
@@ -349,11 +351,16 @@ class MainWindow(Gtk.ApplicationWindow):
 
         def worker():
             for folder_name in folder_names:
+                last_time = [0.0]
+
                 def update_progress(current, total):
-                    fraction = min(max(current / float(total), 0.0), 1.0)
-                    self._folder_progress[folder_name] = fraction
-                    # Safely instruct GTK to update UI on the main thread
-                    GLib.idle_add(self.refresh_folders)
+                    if total > 0:
+                        current_time = time.time()
+                        fraction = min(max(current / float(total), 0.0), 1.0)
+                        if (current_time - last_time[0] >= 1.0) or (current == total):
+                            self._folder_progress[folder_name] = fraction
+                            GLib.idle_add(self.refresh_folders)
+                            last_time[0] = current_time
 
                 classified = classify_linked_files(
                     config, target_device, folder_name,
@@ -379,7 +386,6 @@ class MainWindow(Gtk.ApplicationWindow):
 
                 has_any = any(len(files) > 0 for files in report.values())
 
-                # Store result in cache via main thread idle loop
                 GLib.idle_add(self._store_folder_cache, folder_name, {
                     "report": report,
                     "classified": classified,
@@ -388,7 +394,7 @@ class MainWindow(Gtk.ApplicationWindow):
                     "has_changes": has_any
                 })
 
-                GLib.idle_add(self._finish_checking)
+            GLib.idle_add(self._finish_checking)
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -461,6 +467,9 @@ class MainWindow(Gtk.ApplicationWindow):
         dlg.destroy()
 
 
+import time
+
+
 class SyncWindow(Gtk.Window):
     def __init__(self, parent, config, device, folder, classified, report, main, on_synced_callback=None):
         super().__init__(title="Sync Decisions & Differences", transient_for=parent, modal=True)
@@ -476,9 +485,35 @@ class SyncWindow(Gtk.Window):
 
         self.decisions = {}
         self.category_lists_map = {}  # Stores the listboxes to rebuild file rows dynamically
+        self.category_progress_bars = {}  # Stores progress bars per category
+        self.category_title_labels = {}  # Stores title labels to update counts dynamically
         self.manual_overrides = {}
 
         self._build_ui()
+
+    def _get_icon_name_for_file(self, file_path):
+        """Determine appropriate icon based on file extension."""
+        ext = file_path.lower().split('.')[-1] if '.' in file_path else ""
+
+        # Images
+        if ext in ('png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp'):
+            return "image-x-generic-symbolic"
+        # Videos
+        elif ext in ('mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm'):
+            return "video-x-generic-symbolic"
+        # Audio
+        elif ext in ('mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a'):
+            return "audio-x-generic-symbolic"
+        # Documents / Text / Code
+        elif ext in ('txt', 'md', 'pdf', 'doc', 'docx', 'rtf', 'odt'):
+            return "x-office-document-symbolic"
+        elif ext in ('py', 'js', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'c', 'cpp', 'h'):
+            return "text-x-script-symbolic"
+        # Archives
+        elif ext in ('zip', 'tar', 'gz', 'rar', '7z'):
+            return "package-x-generic-symbolic"
+        else:
+            return "text-x-generic"
 
     def _build_ui(self):
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=12,
@@ -503,7 +538,12 @@ class SyncWindow(Gtk.Window):
                 card.set_margin_end(4)
 
                 header = Gtk.Box(spacing=12, margin_top=8, margin_start=8, margin_end=8)
-                header.append(Gtk.Label(label=category, css_classes=["heading"], halign=Gtk.Align.START))
+
+                # Category Title Label storing total file count info
+                title_text = f"{category} ({len(files)} files)"
+                cat_title_lbl = Gtk.Label(label=title_text, css_classes=["heading"], halign=Gtk.Align.START)
+                self.category_title_labels[category] = (category, len(files))
+                header.append(cat_title_lbl)
 
                 spacer = Gtk.Box()
                 spacer.set_hexpand(True)
@@ -522,7 +562,14 @@ class SyncWindow(Gtk.Window):
                 header.append(btn_manual)
                 card.append(header)
 
-                # Inner ScrolledWindow for each category file list to prevent full window overflow
+                # Progress bar for this specific category
+                pbar = Gtk.ProgressBar(margin_start=8, margin_end=8, margin_top=4)
+                pbar.set_fraction(0.0)
+                pbar.set_visible(False)
+                self.category_progress_bars[category] = pbar
+                card.append(pbar)
+
+                # Inner ScrolledWindow for each category file list
                 file_scroller = Gtk.ScrolledWindow(hscrollbar_policy=Gtk.PolicyType.NEVER)
                 file_scroller.set_min_content_height(100)
                 file_scroller.set_max_content_height(180)
@@ -613,12 +660,19 @@ class SyncWindow(Gtk.Window):
         choice = self.decisions.get(target_category, SKIP)
         approved_set = self.manual_overrides.get(target_category, set())
 
-        for f in files:
+        for idx, f in enumerate(files, start=1):
             row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
                               margin_top=4, margin_bottom=4, margin_start=8, margin_end=8)
 
-            # File icon like SyncFileTile
-            icon = Gtk.Image(icon_name="text-x-generic")
+            # File number label (1, 2, 3...) to the left of the icon
+            num_label = Gtk.Label(label=f"{idx}.", css_classes=["dim-label"])
+            num_label.set_width_chars(3)
+            num_label.set_xalign(1.0)
+            row_box.append(num_label)
+
+            # Dynamic file type icon
+            icon_name = self._get_icon_name_for_file(f)
+            icon = Gtk.Image(icon_name=icon_name)
             icon.set_valign(Gtk.Align.CENTER)
             row_box.append(icon)
 
@@ -650,8 +704,15 @@ class SyncWindow(Gtk.Window):
         self.close_btn.set_sensitive(False)
         self.sync_spinner.start()
 
+        for category, choice in self.decisions.items():
+            if choice != SKIP and choice:
+                pbar = self.category_progress_bars.get(category)
+                if pbar:
+                    pbar.set_visible(True)
+                    pbar.set_fraction(0.0)
+
         def worker():
-            from noserversync.synclib import update_sync_time, save_config
+            from noserversync.synclib import update_sync_time, save_config, do_sync
             import io
             from contextlib import redirect_stdout
 
@@ -679,7 +740,24 @@ class SyncWindow(Gtk.Window):
                     if not filtered_classified:
                         continue
 
-                    self.config = do_sync(self.config, self.device, self.folder, filtered_classified, self.main)
+                    last_time = [0.0]
+
+                    def progress_callback(current, total):
+                        if total > 0:
+                            current_time = time.time()
+                            fraction = min(max(current / float(total), 0.0), 1.0)
+                            if (current_time - last_time[0] >= 1.0) or (current == total):
+                                GLib.idle_add(self._update_category_progress, category, fraction)
+                                last_time[0] = current_time
+
+                    self.config = do_sync(
+                        self.config,
+                        self.device,
+                        self.folder,
+                        filtered_classified,
+                        self.main,
+                        progress_callback=progress_callback
+                    )
 
                 self.config = update_sync_time(self.config, device=self.device, folder=self.folder)
                 save_config(self.config)
@@ -687,6 +765,12 @@ class SyncWindow(Gtk.Window):
             GLib.idle_add(self._finish_sync)
 
         threading.Thread(target=worker, daemon=True).start()
+
+    def _update_category_progress(self, category, fraction):
+        pbar = self.category_progress_bars.get(category)
+        if pbar:
+            pbar.set_fraction(fraction)
+        return GLib.SOURCE_REMOVE
 
     def _finish_sync(self):
         self.sync_spinner.stop()

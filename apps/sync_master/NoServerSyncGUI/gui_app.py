@@ -1,4 +1,5 @@
 from gi.repository import Gtk, Gio
+from noserversync.synclib import get_main_device
 
 from .backend import load_config as _load_config
 from .main_window import MainWindow
@@ -28,7 +29,6 @@ class NoServerSyncGUIApp(Gtk.Application):
         self.config = _load_config()
 
         # Check if main device is set
-        from .backend import get_main_device
         main = get_main_device(self.config)
         if not main:
             print("[GUI_APP] WARNING: No main device configured!")

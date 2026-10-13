@@ -2,7 +2,9 @@
 GUI backend bridge: wraps synclib/cmd_frontend functionality without
 modifying them. Captures stdout (tqdm / prints) and routes it to a callback.
 """
+import io
 import os
+from contextlib import redirect_stdout
 from pathlib import Path
 
 from noserversync.synclib import CONFIG_FOLDERS_KEY_NAME
@@ -11,21 +13,11 @@ from noserversync.synclib import (
     load_config as _load_config, save_config, set_main_device,
     get_main_device, add_tracking_to_folder, add_sync_folder_settings, FOLDER_SETTINGS,
     init_sync_tracker,
-    NEW, CHANGED, DELETE, CONFLICT, add_new_files, update_changed_files, remove_deleted_files,
-    append_conflicted_files, duplicate_conflicted_files,
-    update_sync_time,
 )
 from noserversync.synclib import add_device as _add_device
-from noserversync.synclib import get_main_device as _get_main_device
 
 MODE_DIFF = "diff"
 MODE_SYNC = "sync"
-
-
-# Add this getter function
-def get_main_device(config):
-    """Return the current main device name (may be None)."""
-    return _get_main_device(config)
 
 
 def _capture(fn, *args, **kwargs):
@@ -151,45 +143,6 @@ def add_folder(config, device_name, path, direction, append_strategy_to_file_end
     return msg, config
 
 
-import io
-from contextlib import redirect_stdout
-
-
-def _do_sync(config, device, folder, classified, main):
-    """Execute all sync operations."""
-
-    def batch(label, fn, device_from, device_to, keys):
-        for key in keys:
-            if key in classified and classified[key]:
-                file_count = len(classified[key])
-                msg = f"{label}: {file_count} file(s)"
-                # Ask for confirmation before proceeding
-                # log_callback(msg)
-                print(msg)
-                with redirect_stdout(io.StringIO()):
-                    fn(config, device_from, device_to, folder, classified, DEVICES_DEFAULT_PATH)
-                break
-
-    # Run batch operations with confirmation checks
-    batch(f"Transferring new files ({main}→{device})", add_new_files, main, device, [(NEW, main)])
-    batch(f"Transferring new files ({device}→{main})", add_new_files, device, main, [(NEW, device)])
-    batch(f"Updating changed ({main}→{device})", update_changed_files, main, device, [(CHANGED, main)])
-    batch(f"Updating changed ({device}→{main})", update_changed_files, device, main, [(CHANGED, device)])
-    batch(f"Removing deleted ({main}→{device})", remove_deleted_files, main, device, [(DELETE, main)])
-    batch(f"Removing deleted ({device}→{main})", remove_deleted_files, device, main, [(DELETE, device)])
-
-    conflicted = classified.get(CONFLICT, set())
-    if conflicted:
-        conflict_msg = f"Solving {len(conflicted)} conflicts"
-        print(conflict_msg)
-        append_conflicted_files(config, device, folder, classified, DEVICES_DEFAULT_PATH)
-        duplicate_conflicted_files(config, device, folder, classified, DEVICES_DEFAULT_PATH)
-
-    config = update_sync_time(config, device=device, folder=folder)
-    save_config_debug(config)
-    return config
-
-
 def list_folders(config, device_names, selected_device=None) -> list:
     """Folders shared between the main device and the selected secondary device."""
     try:
@@ -224,4 +177,4 @@ def list_folders(config, device_names, selected_device=None) -> list:
         }
         folders.append(row)
 
-    return folders
+    return sorted(folders, key=lambda row: row["name"])
