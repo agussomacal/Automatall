@@ -1,6 +1,8 @@
 import threading
+import time
 from pathlib import Path
 
+import yaml  # Make sure yaml is imported (or whatever parser backend uses)
 from gi.repository import Gtk, GLib, Gdk, Gio, Pango
 from noserversync.synclib import get_main_device
 
@@ -26,24 +28,6 @@ class MainWindow(Gtk.ApplicationWindow):
         self.refresh_all()
 
         css_provider = Gtk.CssProvider()
-        # css_provider.load_from_data(b"""
-        #     /* Make the row itself styled with transparent blue for the main device */
-        #     .main-device {
-        #         color: rgba(53, 132, 228, 0.8);
-        #         font-weight: bold;
-        #         background-color: rgba(53, 132, 228, 0.12);
-        #     }
-        #     .connected-badge {
-        #         color: #f5c211;
-        #         font-weight: bold;
-        #     }
-        #     .selected-badge {
-        #         color: #2ec27e;
-        #         font-weight: bold;
-        #     }
-        # """)
-
-        # Get the directory where main_window.py is located
         css_path = Path(__file__).parent / "style.css"
         css_provider.load_from_path(str(css_path))
 
@@ -59,8 +43,34 @@ class MainWindow(Gtk.ApplicationWindow):
     def _on_device_poll_tick(self):
         """Called periodically by GLib to refresh devices and check connectivity."""
         self.refresh_devices()
-        # Return True to keep the timeout active, or False to stop it.
         return True
+
+    def _get_gui_config_path(self):
+        """Returns the path to the GUI-specific config file (config_gui.yml)."""
+        # Save config_gui.yml in the same directory as this script (or adapt to your config directory)
+        return Path(__file__).parent / "config_gui.yml"
+
+    def _load_gui_config(self):
+        """Load GUI configuration from config_gui.yml."""
+        path = self._get_gui_config_path()
+        if path.exists():
+            try:
+                with open(path, "r") as f:
+                    data = yaml.safe_load(f)
+                    if isinstance(data, dict):
+                        return data
+            except Exception as e:
+                print(f"Error loading config_gui.yml: {e}")
+        return {"disabled_folders": []}
+
+    def _save_gui_config(self, config_data):
+        """Save GUI configuration to config_gui.yml."""
+        path = self._get_gui_config_path()
+        try:
+            with open(path, "w") as f:
+                yaml.safe_dump(config_data, f)
+        except Exception as e:
+            print(f"Error saving config_gui.yml: {e}")
 
     def _build_ui(self):
         main_box = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=0)
@@ -233,11 +243,21 @@ class MainWindow(Gtk.ApplicationWindow):
 
     def _fill_list_folders(self, listbox, rows):
         self._clear_listbox(listbox)
+        gui_config = self._load_gui_config()
+        disabled_folders = gui_config.get("disabled_folders", [])
+
         for row_data in rows:
             folder_name = row_data["name"]
 
             box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12,
                           margin_top=6, margin_bottom=6, margin_start=12, margin_end=12)
+
+            # Checkbox to activate or deactivate sync checks for this folder
+            is_active = folder_name not in disabled_folders
+            check_btn = Gtk.CheckButton(active=is_active)
+            check_btn.set_valign(Gtk.Align.CENTER)
+            check_btn.connect("toggled", lambda btn, f=folder_name: self._on_folder_toggle_sync(f, btn.get_active()))
+            box.append(check_btn)
 
             icon_name = row_data.get("icon", "folder-symbolic")
             icon = Gtk.Image(icon_name=icon_name)
@@ -252,14 +272,14 @@ class MainWindow(Gtk.ApplicationWindow):
             spacer.set_hexpand(True)
             box.append(spacer)
 
-            # Dynamic badges or sync action buttons per folder tile
             if folder_name in self._just_synced_folders:
                 synced_badge = Gtk.Label(label="Just synced", css_classes=["connected-badge"])
                 box.append(synced_badge)
+            elif not is_active:
+                disabled_badge = Gtk.Label(label="Check disabled", css_classes=["dim-label"])
+                box.append(disabled_badge)
             elif folder_name in self._checking_folders:
-                # Create a progress bar matching the current progress value
                 pbar = Gtk.ProgressBar()
-                # Get fraction safely, default to 0.0
                 fraction = getattr(self, "_folder_progress", {}).get(folder_name, 0.0)
                 pbar.set_fraction(fraction)
                 pbar.set_size_request(120, -1)
@@ -277,6 +297,19 @@ class MainWindow(Gtk.ApplicationWindow):
             row = Gtk.ListBoxRow(child=box)
             row.row_data = row_data
             listbox.append(row)
+
+    def _on_folder_toggle_sync(self, folder_name, is_active):
+        """Save folder enabled/disabled state to config_gui.yml."""
+        gui_config = self._load_gui_config()
+        if "disabled_folders" not in gui_config:
+            gui_config["disabled_folders"] = []
+
+        if not is_active and folder_name not in gui_config["disabled_folders"]:
+            gui_config["disabled_folders"].append(folder_name)
+        elif is_active and folder_name in gui_config["disabled_folders"]:
+            gui_config["disabled_folders"].remove(folder_name)
+
+        self._save_gui_config(gui_config)
 
     @staticmethod
     def _clear_listbox(listbox):
@@ -300,7 +333,6 @@ class MainWindow(Gtk.ApplicationWindow):
             return
 
         self._selected_device = data["name"]
-        # Clear cache when changing devices
         self._folder_sync_cache.clear()
         self._checking_folders.clear()
         self._just_synced_folders.clear()
@@ -322,7 +354,7 @@ class MainWindow(Gtk.ApplicationWindow):
         if not self._selected_device:
             return
 
-        config = self.get_config()
+        config = backend.load_config()
         device_list = get_connected_devices(config)
         if not device_list:
             return
@@ -330,17 +362,19 @@ class MainWindow(Gtk.ApplicationWindow):
         main = get_main_device(config)
         target_device = self._selected_device
 
-        # Get all shared folders for this device
+        # Read disabled folders from config_gui.yml
+        gui_config = self._load_gui_config()
+        disabled_folders = gui_config.get("disabled_folders", [])
+
+        # Get all shared folders for this device, filtering out disabled ones
         folders = backend.list_folders(config, [target_device], target_device)
-        folder_names = [f["name"] for f in folders]
+        folder_names = [f["name"] for f in folders if f["name"] not in disabled_folders]
 
         if not folder_names:
             return
 
-        # Clear just_synced_folders so they get rechecked instead of ignored
         self._just_synced_folders.clear()
 
-        # Track progress fraction dictionary and mark all folders as checking
         self._folder_progress = {}
         for fname in folder_names:
             self._checking_folders.add(fname)
@@ -428,7 +462,6 @@ class MainWindow(Gtk.ApplicationWindow):
         sync_win.present()
 
     def _on_folder_synced(self, folder_name):
-        # Remove from cache so the sync button goes away and show 'Just synced' badge
         if folder_name in self._folder_sync_cache:
             del self._folder_sync_cache[folder_name]
         self._just_synced_folders.add(folder_name)
@@ -451,9 +484,18 @@ class MainWindow(Gtk.ApplicationWindow):
         dlg.destroy()
 
     def on_add_folder(self):
-        if not self._selected_device:
-            return
-        dlg = AddFolderDialog(self, device_name=self._selected_device, config=self.get_config())
+        from . import backend
+        devices = backend.list_devices(self.get_config())
+        non_main_devices = [d["name"] for d in devices if not d.get("is_main", False)]
+
+        target_device = self._selected_device
+        if not target_device:
+            if non_main_devices:
+                target_device = non_main_devices[0]
+            else:
+                return
+
+        dlg = AddFolderDialog(self, device_name=target_device, config=self.get_config())
         dlg.connect("response", self.on_add_folder_response)
         dlg.present()
 
@@ -465,9 +507,6 @@ class MainWindow(Gtk.ApplicationWindow):
             self.get_application().update_config(config)
             self.refresh_all()
         dlg.destroy()
-
-
-import time
 
 
 class SyncWindow(Gtk.Window):
