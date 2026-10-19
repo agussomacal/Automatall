@@ -1,10 +1,11 @@
 import threading
 import time
+from collections import defaultdict
 from pathlib import Path
 
 import yaml  # Make sure yaml is imported (or whatever parser backend uses)
 from gi.repository import Gtk, GLib, Gdk, Gio, Pango
-from noserversync.synclib import get_main_device
+from noserversync.synclib import get_main_device, NEW, CHANGED, DELETE
 
 from .dialogs import AddDeviceDialog, AddFolderDialog
 
@@ -675,8 +676,8 @@ class SyncWindow(Gtk.Window):
         all_decided = all(val != SKIP for val in self.decisions.values()) and len(self.decisions) > 0
         self.btn_do_sync.set_sensitive(all_decided)
 
-    def _store_manual_decisions(self, category, approved_files):
-        self.manual_overrides[category] = set(approved_files)
+    def _store_manual_decisions(self, category, result):
+        self.manual_overrides[category] = result
         self.decisions[category] = MANUAL_CUSTOM
         self._update_category_display(category)
 
@@ -697,7 +698,8 @@ class SyncWindow(Gtk.Window):
 
         files = self.report.get(target_category, [])
         choice = self.decisions.get(target_category, SKIP)
-        approved_set = self.manual_overrides.get(target_category, set())
+        is_del = "Deleted files" in target_category
+        override = self.manual_overrides.get(target_category)
 
         for idx, f in enumerate(files, start=1):
             row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
@@ -724,12 +726,26 @@ class SyncWindow(Gtk.Window):
             # Determine sync status and color styling per file row
             status_label = Gtk.Label()
             if choice == ACCEPT:
-                status_label.set_markup("<span color='green'>to sync</span>")
-            elif choice == MANUAL_CUSTOM:
-                if f in approved_set:
-                    status_label.set_markup("<span color='green'>to sync</span>")
+                if is_del:
+                    status_label.set_markup("<span color='red'>to delete</span>")
                 else:
-                    status_label.set_markup("<span color='red'>to skip</span>")
+                    status_label.set_markup("<span color='green'>to sync</span>")
+            elif choice == MANUAL_CUSTOM:
+                if is_del and isinstance(override, dict):
+                    delete_set = override.get("delete", set())
+                    add_set = override.get("add", set())
+                    if f in delete_set:
+                        status_label.set_markup("<span color='red'>to delete</span>")
+                    elif f in add_set:
+                        status_label.set_markup("<span color='green'>to add</span>")
+                    else:
+                        status_label.set_markup("<span color='gray'>to skip</span>")
+                else:
+                    approved_set = override if isinstance(override, (set, list)) else set()
+                    if f in approved_set:
+                        status_label.set_markup("<span color='green'>to sync</span>")
+                    else:
+                        status_label.set_markup("<span color='red'>to skip</span>")
             else:
                 status_label.set_markup("<span color='gray'>to skip</span>")
 
@@ -760,21 +776,48 @@ class SyncWindow(Gtk.Window):
                     if choice == SKIP or not choice:
                         continue
 
-                    allowed_files = set()
-                    if choice == ACCEPT:
-                        allowed_files = set(self.report.get(category, []))
-                    elif choice == MANUAL_CUSTOM:
-                        allowed_files = self.manual_overrides.get(category, set())
+                    is_del = "Deleted files" in category
+                    override = self.manual_overrides.get(category)
+                    filtered_classified = defaultdict(set)
 
-                    if not allowed_files:
-                        continue
+                    if is_del:
+                        delete_files = set()
+                        add_files = set()
+                        if choice == ACCEPT:
+                            delete_files = set(self.report.get(category, []))
+                        elif choice == MANUAL_CUSTOM and isinstance(override, dict):
+                            delete_files = set(override.get("delete", []))
+                            add_files = set(override.get("add", []))
 
-                    filtered_classified = {}
-                    for cat_key, file_set in self.classified.items():
-                        if isinstance(file_set, (set, list)):
-                            matched = {file_item for file_item in file_set if file_item in allowed_files}
-                            if matched:
-                                filtered_classified[cat_key] = matched
+                        if f"({self.main} → {self.device})" in category:
+                            del_key = (DELETE, self.main)
+                            new_key = (NEW, self.device)
+                        else:
+                            del_key = (DELETE, self.device)
+                            new_key = (NEW, self.main)
+
+                        if delete_files and del_key in self.classified:
+                            matched_del = {f for f in self.classified[del_key] if f in delete_files}
+                            if matched_del:
+                                filtered_classified[del_key] = matched_del
+
+                        if add_files:
+                            filtered_classified[new_key].update(add_files)
+                    else:
+                        allowed_files = set()
+                        if choice == ACCEPT:
+                            allowed_files = set(self.report.get(category, []))
+                        elif choice == MANUAL_CUSTOM:
+                            allowed_files = override if isinstance(override, (set, list)) else set()
+
+                        if not allowed_files:
+                            continue
+
+                        for cat_key, file_set in self.classified.items():
+                            if isinstance(file_set, (set, list)):
+                                matched = {file_item for file_item in file_set if file_item in allowed_files}
+                                if matched:
+                                    filtered_classified[cat_key] = matched
 
                     if not filtered_classified:
                         continue
@@ -894,8 +937,16 @@ class ManualSyncWindow(Gtk.Window):
         self.main = main
         self.on_save_callback = on_save_callback
 
-        self.sync_files = list(files_list)
-        self.skip_files = []
+        self.is_deletion = "Deleted files" in category
+        self.checked_paths = set()
+
+        if self.is_deletion:
+            self.delete_files = []
+            self.add_files = []
+            self.do_nothing_files = list(files_list)
+        else:
+            self.sync_files = list(files_list)
+            self.skip_files = []
 
         self._build_ui()
         self._rebuild_lists()
@@ -908,16 +959,45 @@ class ManualSyncWindow(Gtk.Window):
         header.set_title_widget(title_label)
         main_box.append(header)
 
-        paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, wide_handle=True)
-        paned.set_position(500)
-        paned.set_margin_top(12)
-        paned.set_margin_bottom(12)
-        paned.set_margin_start(12)
-        paned.set_margin_end(12)
+        if self.is_deletion:
+            action_row = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12,
+                                 margin_start=12, margin_end=12, margin_top=12, margin_bottom=6)
+            action_row.append(Gtk.Label(label="Selected files action:", css_classes=["heading"]))
 
-        paned.set_start_child(self._build_sync_panel())
-        paned.set_end_child(self._build_skip_panel())
-        main_box.append(paned)
+            btn_action_delete = Gtk.Button(label="deleat")
+            btn_action_delete.connect("clicked", lambda *_: self._move_ticked_to("delete"))
+            action_row.append(btn_action_delete)
+
+            btn_action_add = Gtk.Button(label="add")
+            btn_action_add.connect("clicked", lambda *_: self._move_ticked_to("add"))
+            action_row.append(btn_action_add)
+
+            btn_action_nothing = Gtk.Button(label="do nothing")
+            btn_action_nothing.connect("clicked", lambda *_: self._move_ticked_to("do_nothing"))
+            action_row.append(btn_action_nothing)
+
+            main_box.append(action_row)
+
+            panels_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=12,
+                                 margin_start=12, margin_end=12, margin_top=6, margin_bottom=12)
+            panels_box.set_homogeneous(True)
+
+            panels_box.append(self._build_deletion_panel("deleat", "delete"))
+            panels_box.append(self._build_deletion_panel("add", "add"))
+            panels_box.append(self._build_deletion_panel("do nothing", "do_nothing"))
+
+            main_box.append(panels_box)
+        else:
+            paned = Gtk.Paned(orientation=Gtk.Orientation.HORIZONTAL, wide_handle=True)
+            paned.set_position(500)
+            paned.set_margin_top(12)
+            paned.set_margin_bottom(12)
+            paned.set_margin_start(12)
+            paned.set_margin_end(12)
+
+            paned.set_start_child(self._build_sync_panel())
+            paned.set_end_child(self._build_skip_panel())
+            main_box.append(paned)
 
         action_box = Gtk.Box(spacing=12, halign=Gtk.Align.END, margin_end=12, margin_bottom=12)
         cancel_btn = Gtk.Button(label="Cancel")
@@ -931,6 +1011,39 @@ class ManualSyncWindow(Gtk.Window):
         main_box.append(action_box)
 
         self.set_child(main_box)
+
+    def _build_deletion_panel(self, title, panel_key):
+        frame = Gtk.Frame()
+        vbox = Gtk.Box(orientation=Gtk.Orientation.VERTICAL, spacing=6,
+                       margin_start=12, margin_end=12, margin_top=12, margin_bottom=12)
+
+        header_box = Gtk.Box(spacing=12)
+        header_box.append(Gtk.Label(label=title.capitalize(), css_classes=["title-3"]))
+        header_box.append(Gtk.Box(hexpand=True))
+
+        count_lbl = Gtk.Label(label="0 files", css_classes=["dim-label"])
+        if panel_key == "delete":
+            self.delete_count_lbl = count_lbl
+        elif panel_key == "add":
+            self.add_count_lbl = count_lbl
+        elif panel_key == "do_nothing":
+            self.do_nothing_count_lbl = count_lbl
+        header_box.append(count_lbl)
+        vbox.append(header_box)
+
+        scroller = Gtk.ScrolledWindow(vexpand=True, hscrollbar_policy=Gtk.PolicyType.NEVER)
+        listbox = Gtk.ListBox(selection_mode=Gtk.SelectionMode.NONE)
+        if panel_key == "delete":
+            self.delete_list = listbox
+        elif panel_key == "add":
+            self.add_list = listbox
+        elif panel_key == "do_nothing":
+            self.do_nothing_list = listbox
+
+        scroller.set_child(listbox)
+        vbox.append(scroller)
+        frame.set_child(vbox)
+        return frame
 
     def _build_sync_panel(self):
         frame = Gtk.Frame(margin_end=6)
@@ -1000,6 +1113,27 @@ class ManualSyncWindow(Gtk.Window):
             self.skip_files.clear()
         self._rebuild_lists()
 
+    def _move_ticked_to(self, target_panel):
+        if not self.checked_paths:
+            return
+        for path in list(self.checked_paths):
+            if path in self.delete_files:
+                self.delete_files.remove(path)
+            if path in self.add_files:
+                self.add_files.remove(path)
+            if path in self.do_nothing_files:
+                self.do_nothing_files.remove(path)
+
+            if target_panel == "delete":
+                self.delete_files.append(path)
+            elif target_panel == "add":
+                self.add_files.append(path)
+            elif target_panel == "do_nothing":
+                self.do_nothing_files.append(path)
+
+        self.checked_paths.clear()
+        self._rebuild_lists()
+
     def _handle_swap_callback(self, dragged_path, target_panel):
         self._handle_drop_to_panel(dragged_path, target_panel)
 
@@ -1013,19 +1147,90 @@ class ManualSyncWindow(Gtk.Window):
         self._rebuild_lists()
 
     def _rebuild_lists(self):
-        self._clear_listbox(self.sync_list)
-        self._clear_listbox(self.skip_list)
+        if self.is_deletion:
+            self._clear_listbox(self.delete_list)
+            self._clear_listbox(self.add_list)
+            self._clear_listbox(self.do_nothing_list)
 
-        for path in self.sync_files:
-            tile = SyncFileTile(path, "sync", on_swap_callback=self._handle_swap_callback)
-            self.sync_list.append(tile)
+            for idx, path in enumerate(self.delete_files, start=1):
+                row = self._create_deletion_row(path, idx)
+                self.delete_list.append(row)
 
-        for path in self.skip_files:
-            tile = SyncFileTile(path, "skip", on_swap_callback=self._handle_swap_callback)
-            self.skip_list.append(tile)
+            for idx, path in enumerate(self.add_files, start=1):
+                row = self._create_deletion_row(path, idx)
+                self.add_list.append(row)
 
-        self.sync_count_lbl.set_text(f"{len(self.sync_files)} files")
-        self.skip_count_lbl.set_text(f"{len(self.skip_files)} files")
+            for idx, path in enumerate(self.do_nothing_files, start=1):
+                row = self._create_deletion_row(path, idx)
+                self.do_nothing_list.append(row)
+
+            self.delete_count_lbl.set_text(f"{len(self.delete_files)} files")
+            self.add_count_lbl.set_text(f"{len(self.add_files)} files")
+            self.do_nothing_count_lbl.set_text(f"{len(self.do_nothing_files)} files")
+        else:
+            self._clear_listbox(self.sync_list)
+            self._clear_listbox(self.skip_list)
+
+            for path in self.sync_files:
+                tile = SyncFileTile(path, "sync", on_swap_callback=self._handle_swap_callback)
+                self.sync_list.append(tile)
+
+            for path in self.skip_files:
+                tile = SyncFileTile(path, "skip", on_swap_callback=self._handle_swap_callback)
+                self.skip_list.append(tile)
+
+            self.sync_count_lbl.set_text(f"{len(self.sync_files)} files")
+            self.skip_count_lbl.set_text(f"{len(self.skip_files)} files")
+
+    def _create_deletion_row(self, path, idx):
+        row_box = Gtk.Box(orientation=Gtk.Orientation.HORIZONTAL, spacing=8,
+                          margin_top=4, margin_bottom=4, margin_start=8, margin_end=8)
+
+        chk = Gtk.CheckButton(active=(path in self.checked_paths))
+        chk.set_valign(Gtk.Align.CENTER)
+        chk.connect("toggled", lambda b, p=path: self._on_path_toggled(p, b.get_active()))
+        row_box.append(chk)
+
+        num_label = Gtk.Label(label=f"{idx}.", css_classes=["dim-label"])
+        num_label.set_width_chars(3)
+        num_label.set_xalign(1.0)
+        row_box.append(num_label)
+
+        icon_name = self._parent_get_icon_name_for_file(path) if hasattr(self, '_parent_get_icon_name_for_file') else "text-x-generic"
+        icon = Gtk.Image(icon_name=icon_name)
+        icon.set_valign(Gtk.Align.CENTER)
+        row_box.append(icon)
+
+        filename = path.split("/")[-1]
+        label = Gtk.Label(label=filename, xalign=0)
+        label.set_hexpand(True)
+        label.set_ellipsize(Pango.EllipsizeMode.MIDDLE)
+        row_box.append(label)
+
+        return Gtk.ListBoxRow(child=row_box)
+
+    def _parent_get_icon_name_for_file(self, file_path):
+        ext = file_path.lower().split('.')[-1] if '.' in file_path else ""
+        if ext in ('png', 'jpg', 'jpeg', 'gif', 'svg', 'webp', 'bmp'):
+            return "image-x-generic-symbolic"
+        elif ext in ('mp4', 'mkv', 'avi', 'mov', 'wmv', 'flv', 'webm'):
+            return "video-x-generic-symbolic"
+        elif ext in ('mp3', 'wav', 'flac', 'aac', 'ogg', 'm4a'):
+            return "audio-x-generic-symbolic"
+        elif ext in ('txt', 'md', 'pdf', 'doc', 'docx', 'rtf', 'odt'):
+            return "x-office-document-symbolic"
+        elif ext in ('py', 'js', 'html', 'css', 'json', 'xml', 'yaml', 'yml', 'c', 'cpp', 'h'):
+            return "text-x-script-symbolic"
+        elif ext in ('zip', 'tar', 'gz', 'rar', '7z'):
+            return "package-x-generic-symbolic"
+        else:
+            return "text-x-generic"
+
+    def _on_path_toggled(self, path, is_checked):
+        if is_checked:
+            self.checked_paths.add(path)
+        else:
+            self.checked_paths.discard(path)
 
     @staticmethod
     def _clear_listbox(listbox):
@@ -1037,5 +1242,12 @@ class ManualSyncWindow(Gtk.Window):
 
     def _confirm_manual_choices(self, btn):
         if self.on_save_callback:
-            self.on_save_callback(self.category, self.sync_files)
+            if self.is_deletion:
+                self.on_save_callback(self.category, {
+                    "delete": self.delete_files,
+                    "add": self.add_files,
+                    "do_nothing": self.do_nothing_files
+                })
+            else:
+                self.on_save_callback(self.category, self.sync_files)
         self.destroy()
