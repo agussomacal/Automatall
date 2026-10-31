@@ -1,0 +1,24 @@
+[project]
+name = "the_file_land"
+version = "0.1.0"
+requires-python = ">=3.14"
+dependencies = [
+    "PyQt6>=6.4.0",
+    "tomli>=2.0.0"
+]
+
+[appearance]
+background_color = "#1a1510"
+grid_color = "#a08060"
+grid_alpha = 0.2
+font_family = "Georgia"
+
+[defaults]
+folder_icon = ""
+file_icon = ""
+default_folder_image = ""
+default_file_image = ""
+
+[settings]
+max_items_rendered = 5000
+lod_threshold_zoom = 0.5

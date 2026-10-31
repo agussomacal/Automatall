@@ -1,0 +1,13 @@
+appearance:
+  background_color: '#1a1510'
+  grid_color: '#a08060'
+  grid_alpha: 0.2
+  font_family: Georgia
+  lod_threshold_zoom: 0.5
+defaults:
+  folder_icon: /home/callum/Repos/GitHub/Automatall/apps/the_file_land/icon.png
+  file_icon: ''
+  default_folder_image: ''
+  default_file_image: ''
+settings:
+  max_items_rendered: 5000

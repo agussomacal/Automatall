@@ -1,0 +1,11 @@
+# apps/the_file_land/config.yaml
+name: "The File Land"
+description: "File explorer using maps"
+module: "app"
+icon: "./icon.png"
+enabled: true
+category: "files"
+type: "gui"
+version: "1.0"
+author: ""
+tags: ['files']

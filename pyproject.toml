@@ -9,4 +9,5 @@ dependencies = [
 [tool.uv.workspace]
 members = [
     "apps/sync_master",
+    "apps/the_file_land"
 ]
