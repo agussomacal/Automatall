@@ -182,10 +182,11 @@ class SpatialItem(QGraphicsItem):
                 painter.drawEllipse(QPointF(0, 0), 6, 6)
                 return
 
+        # Transparency selection feedback (no obscuring background box)
         if self.isSelected():
-            painter.setBrush(QBrush(QColor(255, 240, 200, 220)))
-            painter.setPen(QPen(QColor(218, 165, 32), 3))
-            painter.drawRoundedRect(self.boundingRect(), 8, 8)
+            painter.setOpacity(1.0)
+        else:
+            painter.setOpacity(0.65)
 
         if not self._pixmap_cache:
             self._pixmap_cache = get_system_icon(self.path, self.is_dir)
@@ -201,14 +202,19 @@ class SpatialItem(QGraphicsItem):
         dy = -self.height / 2 + 5
         painter.drawPixmap(QPointF(dx, dy), scaled_pixmap)
 
-        painter.setPen(QColor(240, 230, 210) if not self.isSelected() else QColor(40, 30, 20))
+        # High-contrast background banner for the text label
+        painter.setBrush(QBrush(QColor(15, 12, 10, 230)))
+        painter.setPen(QPen(QColor(218, 165, 32), 1) if self.isSelected() else QPen(QColor(60, 50, 40), 1))
+        text_bg_rect = QRectF(-self.width / 2, self.height / 2 - 36, self.width, 32)
+        painter.drawRoundedRect(text_bg_rect, 5, 5)
+
+        painter.setPen(QColor(255, 248, 230))
         font_family = SETTINGS.get("appearance", {}).get("font_family", "Georgia")
         font = QFont(font_family, 10)
         font.setBold(True)
         painter.setFont(font)
 
-        text_rect = QRectF(-self.width / 2, self.height / 2 - 35, self.width, 30)
-        painter.drawText(text_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, self.name)
+        painter.drawText(text_bg_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, self.name)
 
     def mouseDoubleClickEvent(self, event: QMouseEvent):
         if event.button() == Qt.MouseButton.LeftButton:
@@ -283,6 +289,11 @@ class HexTopographyMap(QGraphicsItem):
                     x += step_w * 2
                 y += step_w * 2
 
+        item_locations = {}
+        for item in self.mw.scene.items():
+            if isinstance(item, SpatialItem):
+                item_locations[(item.q, item.r)] = item
+
         for (q, r), tile_data in self.mw.hex_grid_data.items():
             center = hex_to_pixel(q, r, hex_size)
             if not rect.contains(center):
@@ -294,14 +305,23 @@ class HexTopographyMap(QGraphicsItem):
             poly = get_hex_polygon(center, hex_size)
             terrain = tile_data.get("terrain", "ocean")
 
-            if terrain == "land":
+            if (q, r) in item_locations:
+                item = item_locations[(q, r)]
+                if item.is_dir:
+                    painter.setBrush(QBrush(QColor(248, 245, 235)))
+                    painter.setPen(QPen(QColor(40, 30, 20), 2.5))
+                else:
+                    painter.setBrush(QBrush(QColor(255, 248, 180)))
+                    painter.setPen(QPen(QColor(180, 40, 30), 2.5))
+                painter.drawPolygon(poly)
+            elif terrain == "land":
                 painter.setBrush(QBrush(land_color))
                 painter.setPen(QPen(coast_color, 1.5))
                 painter.drawPolygon(poly)
             else:
                 grid_color = QColor(SETTINGS.get("appearance", {}).get("grid_color", "#2c4c7c"))
                 grid_color.setAlphaF(SETTINGS.get("appearance", {}).get("grid_alpha", 0.3))
-                painter.setBrush(Qt.BrushStyle.NoBrush)
+                painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
                 painter.setPen(QPen(grid_color, 0.5))
                 if scale > 0.3:
                     painter.drawPolygon(poly)
@@ -329,7 +349,7 @@ class MiniMapWidget(QWidget):
             my = (pt.y() + world_range / 2) / world_range * h
             return QPointF(mx, my)
 
-        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setPen(QPen(Qt.PenStyle.NoPen))
         painter.setBrush(QBrush(QColor(216, 194, 157)))
         for (q, r), tile in self.mw.hex_grid_data.items():
             if tile.get("terrain") == "land":
@@ -603,50 +623,45 @@ class MainWindow(QMainWindow):
                 if mouse_event.button() == Qt.MouseButton.LeftButton:
                     modifiers = QApplication.keyboardModifiers()
 
-                    # IF PAINT MODE IS ENABLED: Paint tiles and block view panning/dragging
                     if self.brush_mode_checkbox.isChecked():
                         self.is_painting_tiles = True
                         self.paint_brush_at(scene_pos)
                         return True
 
-                    # 1. Dragging selected items
-                    if clicked_item and isinstance(clicked_item, SpatialItem) and (
-                            clicked_item.isSelected() or modifiers == Qt.KeyboardModifier.ControlModifier):
-                        if not clicked_item.isSelected():
-                            if not (modifiers & Qt.KeyboardModifier.ShiftModifier):
-                                self.scene.clearSelection()
+                    # Handle clicking on items with support for multi-selection (Ctrl / Shift)
+                    if clicked_item and isinstance(clicked_item, SpatialItem):
+                        if modifiers & Qt.KeyboardModifier.ControlModifier:
+                            clicked_item.setSelected(not clicked_item.isSelected())
+                        elif modifiers & Qt.KeyboardModifier.ShiftModifier:
                             clicked_item.setSelected(True)
+                        else:
+                            if not clicked_item.isSelected():
+                                self.scene.clearSelection()
+                                clicked_item.setSelected(True)
 
                         self.selected_items = [i for i in self.scene.selectedItems() if isinstance(i, SpatialItem)]
-                        self.is_dragging_items = True
-                        self.drag_mouse_start = scene_pos
-                        self.item_start_positions = {item: item.pos() for item in self.selected_items}
+
+                        # If the clicked item is part of the selection, allow dragging them together
+                        if clicked_item.isSelected():
+                            self.is_dragging_items = True
+                            self.drag_mouse_start = scene_pos
+                            self.item_start_positions = {item: item.pos() for item in self.selected_items}
                         return True
 
-                    # 2. Ctrl + Drag: Box Selection
-                    elif modifiers == Qt.KeyboardModifier.ControlModifier:
+                    elif modifiers & Qt.KeyboardModifier.ControlModifier:
                         self.is_selecting_box = True
                         self.box_select_start = mouse_event.position()
                         self.rubber_band.setGeometry(QRectF(self.box_select_start, self.box_select_start).toRect())
                         self.rubber_band.show()
                         return True
 
-                    # 3. Standard Click (Single selection or Map Panning)
                     else:
-                        if clicked_item and isinstance(clicked_item, SpatialItem):
-                            if not (modifiers & Qt.KeyboardModifier.ShiftModifier):
-                                self.scene.clearSelection()
-                            clicked_item.setSelected(True)
-                            self.selected_items = [i for i in self.scene.selectedItems() if isinstance(i, SpatialItem)]
-                            return True
-                        else:
-                            if not (modifiers & Qt.KeyboardModifier.ShiftModifier):
-                                self.scene.clearSelection()
-                            self.selected_items = []
-                            self.is_panning_view = True
-                            self.pan_mouse_start = mouse_event.globalPosition()
-                            self.view.setCursor(Qt.CursorShape.ClosedHandCursor)
-                            return True
+                        self.scene.clearSelection()
+                        self.selected_items = []
+                        self.is_panning_view = True
+                        self.pan_mouse_start = mouse_event.globalPosition()
+                        self.view.setCursor(Qt.CursorShape.ClosedHandCursor)
+                        return True
 
             elif etype == QEvent.Type.MouseMove:
                 mouse_event = event
@@ -715,11 +730,16 @@ class MainWindow(QMainWindow):
                     self.rubber_band.hide()
                     rect = QRectF(self.view.mapToScene(self.rubber_band.geometry()))
 
+                    modifiers = QApplication.keyboardModifiers()
+                    if not (modifiers & Qt.KeyboardModifier.ControlModifier):
+                        self.scene.clearSelection()
+
                     items_in_rect = self.scene.items(rect)
                     for item in items_in_rect:
                         if isinstance(item, SpatialItem):
                             item.setSelected(True)
                     self.selected_items = [i for i in self.scene.selectedItems() if isinstance(i, SpatialItem)]
+                    self.scene.update()
                     return True
 
                 if self.is_panning_view:
