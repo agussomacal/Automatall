@@ -8,5 +8,5 @@ dependencies = [
 
 [tool.uv.workspace]
 members = [
-    "apps/sync_master"
+    "apps/sync_master",
 ]

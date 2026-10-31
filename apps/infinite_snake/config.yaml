@@ -1,0 +1,11 @@
+# apps/infinite_snake/config.yaml
+name: "Infinite Snake"
+description: "Game for infinite snake colission."
+module: "app"
+icon: "./icon.png"
+enabled: true
+category: "game"
+type: "gui"
+version: "1.0"
+author: ""
+tags: ['game']
