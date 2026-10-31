@@ -182,7 +182,6 @@ class SpatialItem(QGraphicsItem):
                 painter.drawEllipse(QPointF(0, 0), 6, 6)
                 return
 
-        # Transparency selection feedback (no obscuring background box)
         if self.isSelected():
             painter.setOpacity(1.0)
         else:
@@ -202,7 +201,6 @@ class SpatialItem(QGraphicsItem):
         dy = -self.height / 2 + 5
         painter.drawPixmap(QPointF(dx, dy), scaled_pixmap)
 
-        # High-contrast background banner for the text label
         painter.setBrush(QBrush(QColor(15, 12, 10, 230)))
         painter.setPen(QPen(QColor(218, 165, 32), 1) if self.isSelected() else QPen(QColor(60, 50, 40), 1))
         text_bg_rect = QRectF(-self.width / 2, self.height / 2 - 36, self.width, 32)
@@ -268,6 +266,9 @@ class HexTopographyMap(QGraphicsItem):
 
         hex_size = topo_config.get("hex_size", 55.0)
         land_color = QColor(topo_config.get("land_color", "#d8c29d"))
+        forest_color = QColor("#345e38")
+        mountain_color = QColor("#787878")
+        desert_color = QColor("#d4a359")
         coast_color = QColor(topo_config.get("coastline_color", "#6b533b"))
         wave_color = QColor(topo_config.get("wave_color", "#284b7d"))
 
@@ -303,16 +304,19 @@ class HexTopographyMap(QGraphicsItem):
                     continue
 
             poly = get_hex_polygon(center, hex_size)
-            terrain = tile_data.get("terrain", "ocean")
+            terrain = tile_data.get("terrain", "land")
 
-            if (q, r) in item_locations:
-                item = item_locations[(q, r)]
-                if item.is_dir:
-                    painter.setBrush(QBrush(QColor(248, 245, 235)))
-                    painter.setPen(QPen(QColor(40, 30, 20), 2.5))
-                else:
-                    painter.setBrush(QBrush(QColor(255, 248, 180)))
-                    painter.setPen(QPen(QColor(180, 40, 30), 2.5))
+            if terrain == "forest":
+                painter.setBrush(QBrush(forest_color))
+                painter.setPen(QPen(QColor(20, 40, 20), 1.5))
+                painter.drawPolygon(poly)
+            elif terrain == "mountain":
+                painter.setBrush(QBrush(mountain_color))
+                painter.setPen(QPen(QColor(40, 40, 40), 1.5))
+                painter.drawPolygon(poly)
+            elif terrain == "desert":
+                painter.setBrush(QBrush(desert_color))
+                painter.setPen(QPen(QColor(100, 70, 30), 1.5))
                 painter.drawPolygon(poly)
             elif terrain == "land":
                 painter.setBrush(QBrush(land_color))
@@ -325,6 +329,20 @@ class HexTopographyMap(QGraphicsItem):
                 painter.setPen(QPen(grid_color, 0.5))
                 if scale > 0.3:
                     painter.drawPolygon(poly)
+
+        # Render file/folder tile highlights above terrain/water independently
+        for (q, r), item in item_locations.items():
+            center = hex_to_pixel(q, r, hex_size)
+            if not rect.contains(center):
+                continue
+            poly = get_hex_polygon(center, hex_size)
+            if item.is_dir:
+                painter.setBrush(QBrush(QColor(248, 245, 235)))
+                painter.setPen(QPen(QColor(40, 30, 20), 2.5))
+            else:
+                painter.setBrush(QBrush(QColor(255, 248, 180)))
+                painter.setPen(QPen(QColor(180, 40, 30), 2.5))
+            painter.drawPolygon(poly)
 
 
 # --- Mini-Map Widget ---
@@ -350,9 +368,18 @@ class MiniMapWidget(QWidget):
             return QPointF(mx, my)
 
         painter.setPen(QPen(Qt.PenStyle.NoPen))
-        painter.setBrush(QBrush(QColor(216, 194, 157)))
+
+        terrain_colors = {
+            "land": QColor(216, 194, 157),
+            "forest": QColor(52, 94, 56),
+            "mountain": QColor(120, 120, 120),
+            "desert": QColor(212, 163, 89)
+        }
+
         for (q, r), tile in self.mw.hex_grid_data.items():
-            if tile.get("terrain") == "land":
+            terrain = tile.get("terrain", "land")
+            if terrain != "ocean":
+                painter.setBrush(QBrush(terrain_colors.get(terrain, QColor(216, 194, 157))))
                 topo_config = SETTINGS.get("topography", {})
                 hex_size = topo_config.get("hex_size", 55.0)
                 pt = hex_to_pixel(q, r, hex_size)
@@ -492,7 +519,7 @@ class MainWindow(QMainWindow):
         top_layout.addWidget(self.brush_mode_checkbox)
 
         self.terrain_combo = QComboBox()
-        self.terrain_combo.addItems(["Land", "Ocean"])
+        self.terrain_combo.addItems(["Land", "Forest", "Mountain", "Desert", "Ocean"])
         self.terrain_combo.setStyleSheet("background-color: #382c20; color: #f0e0d0; padding: 3px;")
         top_layout.addWidget(self.terrain_combo)
 
@@ -542,11 +569,11 @@ class MainWindow(QMainWindow):
 
     def set_hex_terrain(self, q: int, r: int, terrain: str, region_id: str = None):
         coord = (q, r)
-        if terrain == "land":
+        if terrain != "ocean":
             if not region_id:
-                region_id = f"land_{q}_{r}"
+                region_id = f"terrain_{q}_{r}"
 
-            self.hex_grid_data[coord] = {"terrain": "land", "region_id": region_id}
+            self.hex_grid_data[coord] = {"terrain": terrain, "region_id": region_id}
             if region_id not in self.regions:
                 self.regions[region_id] = set()
             self.regions[region_id].add(coord)
@@ -556,7 +583,7 @@ class MainWindow(QMainWindow):
                 n_coord = (q + dq, r + dr)
                 if n_coord in self.hex_grid_data:
                     n_tile = self.hex_grid_data[n_coord]
-                    if n_tile.get("terrain") == "land" and n_tile.get("region_id") != region_id:
+                    if n_tile.get("terrain") != "ocean" and n_tile.get("region_id") != region_id:
                         target_reg = n_tile.get("region_id")
                         if target_reg in self.regions:
                             for cell in self.regions[target_reg]:
@@ -628,7 +655,6 @@ class MainWindow(QMainWindow):
                         self.paint_brush_at(scene_pos)
                         return True
 
-                    # Handle clicking on items with support for multi-selection (Ctrl / Shift)
                     if clicked_item and isinstance(clicked_item, SpatialItem):
                         if modifiers & Qt.KeyboardModifier.ControlModifier:
                             clicked_item.setSelected(not clicked_item.isSelected())
@@ -641,7 +667,6 @@ class MainWindow(QMainWindow):
 
                         self.selected_items = [i for i in self.scene.selectedItems() if isinstance(i, SpatialItem)]
 
-                        # If the clicked item is part of the selection, allow dragging them together
                         if clicked_item.isSelected():
                             self.is_dragging_items = True
                             self.drag_mouse_start = scene_pos
@@ -771,7 +796,6 @@ class MainWindow(QMainWindow):
 
         add_folder_action = menu.addAction("📁 Add Folder Link Here")
         add_file_action = menu.addAction("📄 Add File Link Here")
-        toggle_hex_action = menu.addAction("🌊 Toggle Hex Terrain (Land/Ocean)")
 
         action = menu.exec(self.view.mapToGlobal(pos.toPoint()))
 
@@ -779,13 +803,6 @@ class MainWindow(QMainWindow):
             self.add_item(q, r, is_dir=True)
         elif action == add_file_action:
             self.add_item(q, r, is_dir=False)
-        elif action == toggle_hex_action:
-            current = self.hex_grid_data.get((q, r), {}).get("terrain", "ocean")
-            new_terrain = "land" if current == "ocean" else "ocean"
-            self.set_hex_terrain(q, r, new_terrain)
-            self.save_layout_state()
-            self.scene.update()
-            self.minimap.update()
 
     def add_item(self, q: int, r: int, is_dir: bool):
         topo_config = SETTINGS.get("topography", {})
@@ -805,11 +822,6 @@ class MainWindow(QMainWindow):
 
         if not path:
             return
-
-        self.set_hex_terrain(final_q, final_r, "land")
-        directions = [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)]
-        for dq, dr in directions:
-            self.set_hex_terrain(final_q + dq, final_r + dr, "land")
 
         item = SpatialItem(path, is_dir, final_q, final_r)
         self.scene.addItem(item)
@@ -847,10 +859,12 @@ class MainWindow(QMainWindow):
                     "r": item.r
                 })
         for (q, r), tile in self.hex_grid_data.items():
-            if tile.get("terrain") == "land":
+            terrain = tile.get("terrain")
+            if terrain and terrain != "ocean":
                 data["hex_grid"].append({
                     "q": q,
                     "r": r,
+                    "terrain": terrain,
                     "region_id": tile.get("region_id")
                 })
 
@@ -870,9 +884,10 @@ class MainWindow(QMainWindow):
                 for hex_entry in data.get("hex_grid", []):
                     q = hex_entry.get("q")
                     r = hex_entry.get("r")
+                    terrain = hex_entry.get("terrain", "land")
                     reg = hex_entry.get("region_id")
                     if q is not None and r is not None:
-                        self.set_hex_terrain(q, r, "land", reg)
+                        self.set_hex_terrain(q, r, terrain, reg)
 
                 for entry in data.get("items", []):
                     path = entry.get("path")
