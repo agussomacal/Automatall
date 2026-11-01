@@ -15,6 +15,7 @@ import stat
 import json
 import subprocess
 import threading
+import shlex
 from pathlib import Path
 
 # Import dependency checker
@@ -509,9 +510,38 @@ class SuperMicroAppManager(Gtk.Window):
         if success:
             self._execute_app(app_name)
 
+    def get_local_python(self, app_base_dir):
+        """
+        Detect if the app folder contains a local Python virtual environment.
+        Checks common venv directory names (.venv, venv, env, .env) or any
+        subfolder containing a bin/python or bin/python3 executable.
+        """
+        if not app_base_dir:
+            return None
+
+        app_base_dir = Path(app_base_dir)
+        if not app_base_dir.exists():
+            return None
+
+        possible_venvs = ['.venv', 'venv', 'env', '.env']
+        for venv_name in possible_venvs:
+            for py_name in ['python', 'python3']:
+                python_path = app_base_dir / venv_name / "bin" / py_name
+                if python_path.exists() and python_path.is_file():
+                    return str(python_path)
+
+        # Fallback check: scan all subdirectories for bin/python or bin/python3
+        for child in app_base_dir.iterdir():
+            if child.is_dir():
+                for py_name in ['python', 'python3']:
+                    python_path = child / "bin" / py_name
+                    if python_path.exists() and python_path.is_file():
+                        return str(python_path)
+
+        return None
+
     def _execute_app(self, app_name):
-        """Actually execute the app (no dependency check)"""
-        # Find app config
+        """Actually execute the app, using its local virtual environment if available."""
         app_config = None
         for app in self.apps:
             if app.get('name') == app_name:
@@ -524,12 +554,25 @@ class SuperMicroAppManager(Gtk.Window):
 
         try:
             app_base_dir = app_config.get('_base_dir')
+            local_python = self.get_local_python(app_base_dir)
+
+            # Setup environment variables to inherit local venv if present
+            env = os.environ.copy()
+            if local_python:
+                venv_bin = Path(local_python).parent
+                venv_root = venv_bin.parent
+                env['PATH'] = f"{venv_bin}:{env.get('PATH', '')}"
+                env['VIRTUAL_ENV'] = str(venv_root)
+                print(f"🐍 Using local Python environment for {app_name}: {local_python}")
+            else:
+                print(f"⚙️ Using current environment for {app_name}")
 
             # GUI app (has module)
             if app_config.get('module'):
                 gui_module = app_base_dir / f"{app_config['module']}.py"
                 if gui_module.exists():
-                    subprocess.Popen(['python3', str(gui_module)])
+                    python_executable = local_python if local_python else 'python3'
+                    subprocess.Popen([python_executable, str(gui_module)], env=env)
                 else:
                     print(f"❌ Module not found: {gui_module}")
 
@@ -540,9 +583,15 @@ class SuperMicroAppManager(Gtk.Window):
                     cmd = str(app_base_dir / cmd.lstrip('./'))
 
                 if cmd.endswith('.sh'):
-                    subprocess.Popen(['/bin/bash', cmd])
+                    subprocess.Popen(['/bin/bash', cmd], env=env)
+                elif cmd.endswith('.py') and local_python:
+                    subprocess.Popen([local_python, cmd], env=env)
                 else:
-                    subprocess.Popen([cmd])
+                    if os.path.exists(cmd) or ' ' in cmd:
+                        args = shlex.split(cmd)
+                        subprocess.Popen(args, env=env)
+                    else:
+                        subprocess.Popen([cmd], env=env)
 
         except Exception as e:
             print(f"❌ Error launching {app_name}: {e}")
