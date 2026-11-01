@@ -1,914 +1,139 @@
-import json
-import math
-import os
 import sys
+import os
+import json
 from pathlib import Path
-from typing import List, Optional, Dict, Tuple, Set
-
-import yaml
-
-from PyQt6.QtCore import (
-    Qt, QPointF, QRectF, QEvent, QLineF
-)
-from PyQt6.QtGui import (
-    QColor, QFont, QPainter, QPen, QBrush, QPixmap,
-    QMouseEvent, QKeyEvent, QPainterPath, QPolygonF
-)
-from PyQt6.QtWidgets import (
-    QApplication, QMainWindow, QGraphicsView, QGraphicsScene,
-    QGraphicsItem, QMenu, QDialog, QVBoxLayout,
-    QLabel, QLineEdit, QPushButton, QMessageBox, QFileDialog,
-    QGraphicsDropShadowEffect, QFrame, QHBoxLayout, QWidget, QCheckBox, QRubberBand,
-    QComboBox, QSpinBox
-)
+from PyQt6.QtWidgets import QApplication, QDialog, QVBoxLayout, QLabel, QComboBox, QPushButton, QLineEdit, QHBoxLayout, \
+    QMessageBox, QFileDialog
+from PyQt6.QtGui import QFont
 
 APP_PATH = Path(__file__).parent
-STATE_FILE = f"{APP_PATH}/layout_state.json"
-SETTINGS_FILE = f"{APP_PATH}/settings.yaml"
+GLOBAL_STATE_FILE = APP_PATH / "global_app_state.json"
+IMAGE_STATE_FILE = APP_PATH / "image_modality" / "layout_state.json"
 
 
-# --- Configuration Loader ---
-def load_settings(path: str = SETTINGS_FILE) -> dict:
-    if not os.path.exists(path):
-        return {}
-    with open(path, "r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
-
-
-def save_settings(settings: dict, path: str = SETTINGS_FILE):
-    try:
-        with open(path, "w", encoding="utf-8") as f:
-            yaml.safe_dump(settings, f, sort_keys=False, allow_unicode=True)
-    except Exception as e:
-        print(f"Error saving settings: {e}")
-
-
-SETTINGS = load_settings()
-
-# --- Constants ---
-ZOOM_MIN = 0.01
-ZOOM_MAX = 5.0
-
-
-# --- Hex Grid Math & Engine ---
-def pixel_to_hex(x: float, y: float, size: float) -> Tuple[int, int]:
-    q = (math.sqrt(3) / 3 * x - 1 / 3 * y) / size
-    r = (2 / 3 * y) / size
-    return axial_round(q, r)
-
-
-def axial_round(q_frac: float, r_frac: float) -> Tuple[int, int]:
-    s_frac = -q_frac - r_frac
-    q = round(q_frac)
-    r = round(r_frac)
-    s = round(s_frac)
-
-    q_diff = abs(q - q_frac)
-    r_diff = abs(r - r_frac)
-    s_diff = abs(s - s_frac)
-
-    if q_diff > r_diff and q_diff > s_diff:
-        q = -r - s
-    elif r_diff > s_diff:
-        r = -q - s
-    return (q, r)
-
-
-def hex_to_pixel(q: int, r: int, size: float) -> QPointF:
-    x = size * (math.sqrt(3) * q + math.sqrt(3) / 2 * r)
-    y = size * (3 / 2 * r)
-    return QPointF(x, y)
-
-
-def get_hex_polygon(center: QPointF, size: float) -> QPolygonF:
-    points = []
-    for i in range(6):
-        angle_deg = 60 * i - 30
-        angle_rad = math.radians(angle_deg)
-        points.append(QPointF(center.x() + size * math.cos(angle_rad),
-                              center.y() + size * math.sin(angle_rad)))
-    return QPolygonF(points)
-
-
-def get_hexes_in_radius(q: int, r: int, radius: int) -> List[Tuple[int, int]]:
-    results = []
-    for dq in range(-radius, radius + 1):
-        for dr in range(max(-radius, -dq - radius), min(radius, -dq + radius) + 1):
-            results.append((q + dq, r + dr))
-    return results
-
-
-def get_spiral_hex_ring(q: int, r: int, radius: int) -> List[Tuple[int, int]]:
-    results = [(q, r)]
-    for k in range(1, radius + 1):
-        curr_q = q + k
-        curr_r = r - k
-        for i in range(6):
-            for _ in range(k):
-                results.append((curr_q, curr_r))
-                directions = [(0, 1), (-1, 1), (-1, 0), (0, -1), (1, -1), (1, 0)]
-                dq, dr = directions[i]
-                curr_q += dq
-                curr_r += dr
-    return results
-
-
-# --- Helper Functions ---
-def get_system_icon(path: str, is_dir: bool) -> QPixmap:
-    defaults = SETTINGS.get("defaults", {})
-    custom_icon = defaults.get("folder_icon" if is_dir else "file_icon", "")
-
-    if custom_icon and os.path.exists(custom_icon):
-        pix = QPixmap(custom_icon)
-        if not pix.isNull():
-            return pix
-
-    color = QColor(139, 115, 85) if is_dir else QColor(210, 180, 140)
-    pixmap = QPixmap(64, 64)
-    pixmap.fill(Qt.GlobalColor.transparent)
-    painter = QPainter(pixmap)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-    painter.setBrush(QBrush(color))
-    painter.setPen(QPen(QColor(60, 40, 20), 2))
-    painter.drawRoundedRect(4, 4, 56, 56, 8, 8)
-
-    painter.setPen(QColor(255, 255, 255))
-    painter.setFont(QFont("Arial", 22, QFont.Weight.Bold))
-    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "📁" if is_dir else "📄")
-    painter.end()
-
-    return pixmap
-
-
-# --- Custom Graphics Items ---
-class SpatialItem(QGraphicsItem):
-    def __init__(self, path: str, is_dir: bool, q: int, r: int, parent=None):
-        super().__init__(parent)
-        self.path = path
-        self.is_dir = is_dir
-        self.name = os.path.basename(path) or path
-        self.q = q
-        self.r = r
-
-        self.width = 90
-        self.height = 95
-
-        topo_config = SETTINGS.get("topography", {})
-        hex_size = topo_config.get("hex_size", 55.0)
-        center_pt = hex_to_pixel(q, r, hex_size)
-        self.setPos(center_pt)
-
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsMovable, False)
-        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
-
-        self._pixmap_cache: Optional[QPixmap] = None
-
-        shadow = QGraphicsDropShadowEffect()
-        shadow.setBlurRadius(15)
-        shadow.setColor(QColor(0, 0, 0, 180))
-        shadow.setOffset(3, 3)
-        self.setGraphicsEffect(shadow)
-
-    def boundingRect(self) -> QRectF:
-        return QRectF(-self.width / 2, -self.height / 2, self.width, self.height)
-
-    def paint(self, painter: QPainter, option, widget):
-        view = self.scene().views()[0] if self.scene() else None
-        if view:
-            scale = view.transform().m11()
-            lod_threshold = SETTINGS.get("appearance", {}).get("lod_threshold_zoom", 0.5)
-            if scale < lod_threshold:
-                painter.setBrush(QBrush(QColor(180, 160, 130)))
-                painter.drawEllipse(QPointF(0, 0), 6, 6)
-                return
-
-        if self.isSelected():
-            painter.setOpacity(1.0)
-        else:
-            painter.setOpacity(0.65)
-
-        if not self._pixmap_cache:
-            self._pixmap_cache = get_system_icon(self.path, self.is_dir)
-
-        scale_factor = max(0.5, min(1.5, view.transform().m11() if view else 1.0))
-        scaled_pixmap = self._pixmap_cache.scaled(
-            int(54 * scale_factor), int(54 * scale_factor),
-            Qt.AspectRatioMode.KeepAspectRatio,
-            Qt.TransformationMode.SmoothTransformation
-        )
-
-        dx = -scaled_pixmap.width() / 2
-        dy = -self.height / 2 + 5
-        painter.drawPixmap(QPointF(dx, dy), scaled_pixmap)
-
-        painter.setBrush(QBrush(QColor(15, 12, 10, 230)))
-        painter.setPen(QPen(QColor(218, 165, 32), 1) if self.isSelected() else QPen(QColor(60, 50, 40), 1))
-        text_bg_rect = QRectF(-self.width / 2, self.height / 2 - 36, self.width, 32)
-        painter.drawRoundedRect(text_bg_rect, 5, 5)
-
-        painter.setPen(QColor(255, 248, 230))
-        font_family = SETTINGS.get("appearance", {}).get("font_family", "Georgia")
-        font = QFont(font_family, 10)
-        font.setBold(True)
-        painter.setFont(font)
-
-        painter.drawText(text_bg_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, self.name)
-
-    def mouseDoubleClickEvent(self, event: QMouseEvent):
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.open_item()
-            event.accept()
-            return
-        super().mouseDoubleClickEvent(event)
-
-    def open_item(self):
-        import subprocess
-        try:
-            target_path = self.path
-            if sys.platform == "darwin":
-                subprocess.Popen(["open", target_path])
-            elif sys.platform == "win32":
-                os.startfile(target_path)
-            else:
-                subprocess.Popen(["xdg-open", target_path])
-        except Exception as e:
-            print(f"Error opening {target_path}: {e}")
-
-
-class HexTopographyMap(QGraphicsItem):
-    def __init__(self, main_window):
-        super().__init__()
-        self.mw = main_window
-        self.setZValue(-10)
-
-    def boundingRect(self) -> QRectF:
-        return QRectF(-200000, -200000, 400000, 400000)
-
-    def paint(self, painter: QPainter, option, widget):
-        view = self.scene().views()[0] if self.scene() else None
-        if not view:
-            return
-
-        topo_config = SETTINGS.get("topography", {})
-        if not topo_config.get("enabled", True):
-            bg_color = SETTINGS.get("appearance", {}).get("background_color", "#1b365d")
-            painter.fillRect(view.mapToScene(view.viewport().rect()).boundingRect(), QBrush(QColor(bg_color)))
-            return
-
-        rect = view.mapToScene(view.viewport().rect()).boundingRect()
-
-        ocean_color = QColor(topo_config.get("ocean_color", "#1b365d"))
-        painter.fillRect(rect, QBrush(ocean_color))
-
-        scale = view.transform().m11()
-        if scale < 0.02:
-            return
-
-        hex_size = topo_config.get("hex_size", 55.0)
-        land_color = QColor(topo_config.get("land_color", "#d8c29d"))
-        forest_color = QColor("#345e38")
-        mountain_color = QColor("#787878")
-        desert_color = QColor("#d4a359")
-        coast_color = QColor(topo_config.get("coastline_color", "#6b533b"))
-        wave_color = QColor(topo_config.get("wave_color", "#284b7d"))
-
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-
-        if scale > 0.15:
-            painter.setPen(QPen(wave_color, 1.5, Qt.PenStyle.SolidLine))
-            step_w = hex_size * 3
-            start_x = math.floor(rect.left() / step_w) * step_w
-            end_x = math.ceil(rect.right() / step_w) * step_w
-            start_y = math.floor(rect.top() / step_w) * step_w
-            end_y = math.ceil(rect.bottom() / step_w) * step_w
-
-            y = start_y
-            while y <= end_y:
-                x = start_x
-                while x <= end_x:
-                    painter.drawArc(QRectF(x, y, 20, 10), 0, 180 * 16)
-                    x += step_w * 2
-                y += step_w * 2
-
-        item_locations = {}
-        for item in self.mw.scene.items():
-            if isinstance(item, SpatialItem):
-                item_locations[(item.q, item.r)] = item
-
-        for (q, r), tile_data in self.mw.hex_grid_data.items():
-            center = hex_to_pixel(q, r, hex_size)
-            if not rect.contains(center):
-                if abs(center.x() - rect.center().x()) > rect.width() / 2 + hex_size * 2:
-                    continue
-                if abs(center.y() - rect.center().y()) > rect.height() / 2 + hex_size * 2:
-                    continue
-
-            poly = get_hex_polygon(center, hex_size)
-            terrain = tile_data.get("terrain", "land")
-
-            if terrain == "forest":
-                painter.setBrush(QBrush(forest_color))
-                painter.setPen(QPen(QColor(20, 40, 20), 1.5))
-                painter.drawPolygon(poly)
-            elif terrain == "mountain":
-                painter.setBrush(QBrush(mountain_color))
-                painter.setPen(QPen(QColor(40, 40, 40), 1.5))
-                painter.drawPolygon(poly)
-            elif terrain == "desert":
-                painter.setBrush(QBrush(desert_color))
-                painter.setPen(QPen(QColor(100, 70, 30), 1.5))
-                painter.drawPolygon(poly)
-            elif terrain == "land":
-                painter.setBrush(QBrush(land_color))
-                painter.setPen(QPen(coast_color, 1.5))
-                painter.drawPolygon(poly)
-            else:
-                grid_color = QColor(SETTINGS.get("appearance", {}).get("grid_color", "#2c4c7c"))
-                grid_color.setAlphaF(SETTINGS.get("appearance", {}).get("grid_alpha", 0.3))
-                painter.setBrush(QBrush(Qt.BrushStyle.NoBrush))
-                painter.setPen(QPen(grid_color, 0.5))
-                if scale > 0.3:
-                    painter.drawPolygon(poly)
-
-        # Render file/folder tile highlights above terrain/water independently
-        for (q, r), item in item_locations.items():
-            center = hex_to_pixel(q, r, hex_size)
-            if not rect.contains(center):
-                continue
-            poly = get_hex_polygon(center, hex_size)
-            if item.is_dir:
-                painter.setBrush(QBrush(QColor(248, 245, 235)))
-                painter.setPen(QPen(QColor(40, 30, 20), 2.5))
-            else:
-                painter.setBrush(QBrush(QColor(255, 248, 180)))
-                painter.setPen(QPen(QColor(180, 40, 30), 2.5))
-            painter.drawPolygon(poly)
-
-
-# --- Mini-Map Widget ---
-class MiniMapWidget(QWidget):
-    def __init__(self, main_window, parent=None):
-        super().__init__(parent)
-        self.mw = main_window
-        self.setFixedSize(180, 140)
-        self.setStyleSheet("background-color: rgba(26, 21, 16, 210); border: 2px solid #5a4430; border-radius: 6px;")
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
-
-        painter.fillRect(self.rect(), QBrush(QColor(27, 54, 93)))
-
-        world_range = 10000.0
-        w, h = self.width(), self.height()
-
-        def world_to_mini(pt: QPointF):
-            mx = (pt.x() + world_range / 2) / world_range * w
-            my = (pt.y() + world_range / 2) / world_range * h
-            return QPointF(mx, my)
-
-        painter.setPen(QPen(Qt.PenStyle.NoPen))
-
-        terrain_colors = {
-            "land": QColor(216, 194, 157),
-            "forest": QColor(52, 94, 56),
-            "mountain": QColor(120, 120, 120),
-            "desert": QColor(212, 163, 89)
-        }
-
-        for (q, r), tile in self.mw.hex_grid_data.items():
-            terrain = tile.get("terrain", "land")
-            if terrain != "ocean":
-                painter.setBrush(QBrush(terrain_colors.get(terrain, QColor(216, 194, 157))))
-                topo_config = SETTINGS.get("topography", {})
-                hex_size = topo_config.get("hex_size", 55.0)
-                pt = hex_to_pixel(q, r, hex_size)
-                mpt = world_to_mini(pt)
-                painter.drawEllipse(mpt, 2.5, 2.5)
-
-        painter.setBrush(QBrush(QColor(218, 165, 32)))
-        for item in self.mw.scene.items():
-            if isinstance(item, SpatialItem):
-                mpt = world_to_mini(item.pos())
-                painter.drawEllipse(mpt, 3, 3)
-
-        view = self.mw.view
-        viewport_scene_rect = view.mapToScene(view.viewport().rect()).boundingRect()
-        top_left = world_to_mini(viewport_scene_rect.topLeft())
-        bottom_right = world_to_mini(viewport_scene_rect.bottomRight())
-
-        cam_rect = QRectF(top_left, bottom_right)
-        painter.setPen(QPen(QColor(255, 255, 255, 200), 1.5))
-        painter.setBrush(QBrush(QColor(255, 255, 255, 40)))
-        painter.drawRect(cam_rect)
-
-    def mousePressEvent(self, event: QMouseEvent):
-        self.pan_to_minimap_click(event.position())
-
-    def mouseMoveEvent(self, event: QMouseEvent):
-        self.pan_to_minimap_click(event.position())
-
-    def pan_to_minimap_click(self, pos: QPointF):
-        world_range = 10000.0
-        w, h = self.width(), self.height()
-        wx = (pos.x() / w) * world_range - world_range / 2
-        wy = (pos.y() / h) * world_range - world_range / 2
-        self.mw.view.centerOn(wx, wy)
-        self.update()
-
-
-# --- Settings Dialog ---
-class SettingsDialog(QDialog):
+class ModalitySelectorDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Map Explorer Settings")
-        self.resize(460, 320)
+        self.setWindowTitle("Select Map Modality")
+        self.resize(420, 220)
         self.setStyleSheet("background-color: #241c14; color: #f0e0d0;")
 
         layout = QVBoxLayout()
+        title = QLabel("Choose Map Modality:")
+        title.setStyleSheet("font-size: 14pt; font-weight: bold; color: #e0d0b0;")
+        layout.addWidget(title)
 
-        topo_config = SETTINGS.get("topography", {})
-        self.topo_checkbox = QCheckBox("Enable Topographic Map & Water Waves")
-        self.topo_checkbox.setChecked(topo_config.get("enabled", True))
-        layout.addWidget(self.topo_checkbox)
+        self.combo = QComboBox()
+        self.combo.addItem("Hexagon Map (Interactive / Procedural)", "hex_modality")
+        self.combo.addItem("High-Definition Image Map (Static Background)", "image_modality")
+        self.combo.setStyleSheet("background-color: #382c20; color: #f0e0d0; padding: 6px;")
+        layout.addWidget(self.combo)
 
-        layout.addWidget(QLabel("Default Folder Icon Path:"))
-        self.folder_path_edit = QLineEdit(SETTINGS.get("defaults", {}).get("folder_icon", ""))
-        btn_folder = QPushButton("Browse")
-        btn_folder.clicked.connect(lambda: self.browse_path(self.folder_path_edit))
-        h_layout_f = QHBoxLayout()
-        h_layout_f.addWidget(self.folder_path_edit)
-        h_layout_f.addWidget(btn_folder)
-        layout.addLayout(h_layout_f)
+        self.image_path_label = QLabel("HD Image Path (Remembered / Optional to Change):")
+        layout.addWidget(self.image_path_label)
 
-        layout.addWidget(QLabel("Default File Icon Path:"))
-        self.file_path_edit = QLineEdit(SETTINGS.get("defaults", {}).get("file_icon", ""))
-        btn_file = QPushButton("Browse")
-        btn_file.clicked.connect(lambda: self.browse_path(self.file_path_edit))
-        h_layout_i = QHBoxLayout()
-        h_layout_i.addWidget(self.file_path_edit)
-        h_layout_i.addWidget(btn_file)
-        layout.addLayout(h_layout_i)
+        h_layout = QHBoxLayout()
+        self.image_path_edit = QLineEdit()
+        self.image_path_edit.setStyleSheet("background-color: #382c20; color: #f0e0d0; padding: 4px;")
+
+        self.btn_browse = QPushButton("Browse")
+        self.btn_browse.setStyleSheet("background-color: #4a3828; color: #fff; padding: 4px 8px; border-radius: 4px;")
+        self.btn_browse.clicked.connect(self.browse_image)
+
+        h_layout.addWidget(self.image_path_edit)
+        h_layout.addWidget(self.btn_browse)
+        layout.addLayout(h_layout)
+
+        self.combo.currentIndexChanged.connect(self.on_mode_changed)
+
+        # Load previous states (last modality & last used image path)
+        self.load_previous_state()
 
         layout.addStretch()
 
-        save_btn = QPushButton("Save & Close")
-        save_btn.setStyleSheet("background-color: #4a3828; color: #fff; padding: 6px; border-radius: 4px;")
-        save_btn.clicked.connect(self.accept)
-        layout.addWidget(save_btn)
+        start_btn = QPushButton("Launch Application")
+        start_btn.setStyleSheet(
+            "background-color: #5a4430; color: #fff; padding: 8px; border-radius: 4px; font-weight: bold;")
+        start_btn.clicked.connect(self.accept)
+        layout.addWidget(start_btn)
 
         self.setLayout(layout)
+        self.selected_folder = "hex_modality"
+        self.hd_image_path = ""
 
-    def browse_path(self, line_edit: QLineEdit):
-        path, _ = QFileDialog.getOpenFileName(self, "Select Image Icon", filter="Images (*.png *.xpm *.jpg)")
+    def load_previous_state(self):
+        # 1. Default to last used modality
+        if GLOBAL_STATE_FILE.exists():
+            try:
+                with open(GLOBAL_STATE_FILE, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    last_modality = data.get("last_modality", "hex_modality")
+                    for i in range(self.combo.count()):
+                        if self.combo.itemData(i) == last_modality:
+                            self.combo.setCurrentIndex(i)
+                            break
+            except Exception:
+                pass
+
+        # 2. Preload remembered image path from image modality's state file
+        if IMAGE_STATE_FILE.exists():
+            try:
+                with open(IMAGE_STATE_FILE, "r", encoding="utf-8") as f:
+                    img_data = json.load(f)
+                    saved_img = img_data.get("hd_image_path", "")
+                    if saved_img and os.path.exists(saved_img):
+                        self.image_path_edit.setText(saved_img)
+            except Exception:
+                pass
+
+        self.on_mode_changed()
+
+    def on_mode_changed(self):
+        is_image = (self.combo.currentData() == "image_modality")
+        self.image_path_label.setVisible(is_image)
+        self.image_path_edit.setVisible(is_image)
+        self.btn_browse.setVisible(is_image)
+
+    def browse_image(self):
+        path, _ = QFileDialog.getOpenFileName(self, "Select HD Map Image", filter="Images (*.png *.jpg *.jpeg *.bmp)")
         if path:
-            line_edit.setText(path)
+            self.image_path_edit.setText(path)
 
-
-# --- Main Window ---
-class MainWindow(QMainWindow):
-    def __init__(self):
-        super().__init__()
-        self.setWindowTitle("The File Land - Hex Map Explorer")
-        self.resize(1200, 800)
-
-        self.hex_grid_data: Dict[Tuple[int, int], dict] = {}
-        self.regions: Dict[str, Set[Tuple[int, int]]] = {}
-
-        self.scene = QGraphicsScene()
-        bg_color = SETTINGS.get("appearance", {}).get("background_color", "#1b365d")
-        self.scene.setBackgroundBrush(QColor(bg_color))
-
-        self.topo_item = HexTopographyMap(self)
-        self.scene.addItem(self.topo_item)
-
-        self.view = QGraphicsView(self.scene)
-        self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
-        self.view.setCacheMode(QGraphicsView.CacheModeFlag.CacheBackground)
-        self.view.setViewportUpdateMode(QGraphicsView.ViewportUpdateMode.SmartViewportUpdate)
-        self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        self.view.setDragMode(QGraphicsView.DragMode.NoDrag)
-
-        self.view.setSceneRect(-100000, -100000, 200000, 200000)
-        self.view.centerOn(0, 0)
-
-        central_widget = QWidget()
-        main_layout = QVBoxLayout(central_widget)
-        main_layout.setContentsMargins(0, 0, 0, 0)
-        main_layout.setSpacing(0)
-
-        # Top Bar & Terrain Brush Toolbar
-        top_bar = QFrame()
-        top_bar.setStyleSheet("background-color: #241c14; border-bottom: 1px solid #3c2e20;")
-        top_layout = QHBoxLayout(top_bar)
-        top_layout.setContentsMargins(15, 8, 15, 8)
-
-        title_label = QLabel("🗺️ The File Land (Hex Edition)")
-        title_label.setStyleSheet("color: #e0d0b0; font-weight: bold; font-size: 14pt;")
-        top_layout.addWidget(title_label)
-
-        top_layout.addSpacing(30)
-
-        brush_label = QLabel("🖌️ Brush Tool:")
-        brush_label.setStyleSheet("color: #f0e0d0;")
-        top_layout.addWidget(brush_label)
-
-        self.brush_mode_checkbox = QCheckBox("Paint Mode")
-        self.brush_mode_checkbox.setStyleSheet("color: #f0e0d0; font-weight: bold;")
-        top_layout.addWidget(self.brush_mode_checkbox)
-
-        self.terrain_combo = QComboBox()
-        self.terrain_combo.addItems(["Land", "Forest", "Mountain", "Desert", "Ocean"])
-        self.terrain_combo.setStyleSheet("background-color: #382c20; color: #f0e0d0; padding: 3px;")
-        top_layout.addWidget(self.terrain_combo)
-
-        radius_label = QLabel("Radius:")
-        radius_label.setStyleSheet("color: #f0e0d0;")
-        top_layout.addWidget(radius_label)
-
-        self.radius_spin = QSpinBox()
-        self.radius_spin.setRange(0, 4)
-        self.radius_spin.setValue(1)
-        self.radius_spin.setStyleSheet("background-color: #382c20; color: #f0e0d0; padding: 3px;")
-        top_layout.addWidget(self.radius_spin)
-
-        top_layout.addStretch()
-
-        self.settings_btn = QPushButton("⚙️ Settings")
-        self.settings_btn.setStyleSheet(
-            "background-color: #382c20; color: #f0e0d0; border: 1px solid #5a4430; padding: 6px 12px; border-radius: 4px;"
-        )
-        self.settings_btn.clicked.connect(self.open_settings)
-        top_layout.addWidget(self.settings_btn)
-
-        main_layout.addWidget(top_bar)
-        main_layout.addWidget(self.view)
-        self.setCentralWidget(central_widget)
-
-        self.minimap = MiniMapWidget(self, self.view)
-
-        self.selected_items: List[SpatialItem] = []
-        self.is_dragging_items = False
-        self.is_panning_view = False
-        self.is_selecting_box = False
-        self.is_painting_tiles = False
-        self.drag_mouse_start = QPointF()
-        self.pan_mouse_start = QPointF()
-        self.box_select_start = QPointF()
-        self.item_start_positions = {}
-
-        self.rubber_band = QRubberBand(QRubberBand.Shape.Rectangle, self.view.viewport())
-
-        self.load_layout_state()
-        self.view.viewport().installEventFilter(self)
-
-    def resizeEvent(self, event):
-        super().resizeEvent(event)
-        self.minimap.move(self.width() - self.minimap.width() - 20, self.height() - self.minimap.height() - 40)
-
-    def set_hex_terrain(self, q: int, r: int, terrain: str, region_id: str = None):
-        coord = (q, r)
-        if terrain != "ocean":
-            if not region_id:
-                region_id = f"terrain_{q}_{r}"
-
-            self.hex_grid_data[coord] = {"terrain": terrain, "region_id": region_id}
-            if region_id not in self.regions:
-                self.regions[region_id] = set()
-            self.regions[region_id].add(coord)
-
-            directions = [(1, 0), (1, -1), (0, -1), (-1, 0), (-1, 1), (0, 1)]
-            for dq, dr in directions:
-                n_coord = (q + dq, r + dr)
-                if n_coord in self.hex_grid_data:
-                    n_tile = self.hex_grid_data[n_coord]
-                    if n_tile.get("terrain") != "ocean" and n_tile.get("region_id") != region_id:
-                        target_reg = n_tile.get("region_id")
-                        if target_reg in self.regions:
-                            for cell in self.regions[target_reg]:
-                                self.hex_grid_data[cell]["region_id"] = region_id
-                                self.regions[region_id].add(cell)
-                            del self.regions[target_reg]
-        else:
-            if coord in self.hex_grid_data:
-                reg = self.hex_grid_data[coord].get("region_id")
-                if reg and reg in self.regions:
-                    self.regions[reg].discard(coord)
-                del self.hex_grid_data[coord]
-
-    def paint_brush_at(self, scene_pos: QPointF):
-        topo_config = SETTINGS.get("topography", {})
-        hex_size = topo_config.get("hex_size", 55.0)
-        center_q, center_r = pixel_to_hex(scene_pos.x(), scene_pos.y(), hex_size)
-
-        radius = self.radius_spin.value()
-        terrain_type = self.terrain_combo.currentText().lower()
-
-        target_hexes = get_hexes_in_radius(center_q, center_r, radius)
-        for q, r in target_hexes:
-            self.set_hex_terrain(q, r, terrain_type)
-
-        self.save_layout_state()
-        self.scene.update()
-        self.minimap.update()
-
-    def open_settings(self):
-        dialog = SettingsDialog(self)
-        if dialog.exec() == QDialog.DialogCode.Accepted:
-            if "defaults" not in SETTINGS:
-                SETTINGS["defaults"] = {}
-            if "topography" not in SETTINGS:
-                SETTINGS["topography"] = {}
-
-            SETTINGS["defaults"]["folder_icon"] = dialog.folder_path_edit.text()
-            SETTINGS["defaults"]["file_icon"] = dialog.file_path_edit.text()
-            SETTINGS["topography"]["enabled"] = dialog.topo_checkbox.isChecked()
-
-            save_settings(SETTINGS)
-
-            for item in self.scene.items():
-                if isinstance(item, SpatialItem):
-                    item._pixmap_cache = None
-            self.scene.update()
-            self.minimap.update()
-            QMessageBox.information(self, "Settings", "Settings updated successfully.")
-
-    def eventFilter(self, obj, event):
-        if obj == self.view.viewport():
-            etype = event.type()
-
-            if etype == QEvent.Type.MouseButtonPress:
-                mouse_event = event
-                scene_pos = self.view.mapToScene(mouse_event.position().toPoint())
-                clicked_item = self.scene.itemAt(scene_pos, self.view.transform())
-
-                if mouse_event.button() == Qt.MouseButton.RightButton:
-                    self.show_context_menu(mouse_event.position())
-                    return True
-
-                if mouse_event.button() == Qt.MouseButton.LeftButton:
-                    modifiers = QApplication.keyboardModifiers()
-
-                    if self.brush_mode_checkbox.isChecked():
-                        self.is_painting_tiles = True
-                        self.paint_brush_at(scene_pos)
-                        return True
-
-                    if clicked_item and isinstance(clicked_item, SpatialItem):
-                        if modifiers & Qt.KeyboardModifier.ControlModifier:
-                            clicked_item.setSelected(not clicked_item.isSelected())
-                        elif modifiers & Qt.KeyboardModifier.ShiftModifier:
-                            clicked_item.setSelected(True)
-                        else:
-                            if not clicked_item.isSelected():
-                                self.scene.clearSelection()
-                                clicked_item.setSelected(True)
-
-                        self.selected_items = [i for i in self.scene.selectedItems() if isinstance(i, SpatialItem)]
-
-                        if clicked_item.isSelected():
-                            self.is_dragging_items = True
-                            self.drag_mouse_start = scene_pos
-                            self.item_start_positions = {item: item.pos() for item in self.selected_items}
-                        return True
-
-                    elif modifiers & Qt.KeyboardModifier.ControlModifier:
-                        self.is_selecting_box = True
-                        self.box_select_start = mouse_event.position()
-                        self.rubber_band.setGeometry(QRectF(self.box_select_start, self.box_select_start).toRect())
-                        self.rubber_band.show()
-                        return True
-
-                    else:
-                        self.scene.clearSelection()
-                        self.selected_items = []
-                        self.is_panning_view = True
-                        self.pan_mouse_start = mouse_event.globalPosition()
-                        self.view.setCursor(Qt.CursorShape.ClosedHandCursor)
-                        return True
-
-            elif etype == QEvent.Type.MouseMove:
-                mouse_event = event
-                if self.is_painting_tiles:
-                    scene_pos = self.view.mapToScene(mouse_event.position().toPoint())
-                    self.paint_brush_at(scene_pos)
-                    return True
-                elif self.is_dragging_items:
-                    current_scene_pos = self.view.mapToScene(mouse_event.position().toPoint())
-                    delta = current_scene_pos - self.drag_mouse_start
-                    for item, start_pos in self.item_start_positions.items():
-                        item.setPos(start_pos + delta)
-                    self.scene.update()
-                    self.minimap.update()
-                    return True
-                elif self.is_selecting_box:
-                    current_pos = mouse_event.position()
-                    self.rubber_band.setGeometry(QRectF(self.box_select_start, current_pos).toRect().normalized())
-                    return True
-                elif self.is_panning_view:
-                    global_pos = mouse_event.globalPosition()
-                    delta = global_pos - self.pan_mouse_start
-                    self.pan_mouse_start = global_pos
-
-                    h_bar = self.view.horizontalScrollBar()
-                    v_bar = self.view.verticalScrollBar()
-                    h_bar.setValue(int(h_bar.value() - delta.x()))
-                    v_bar.setValue(int(v_bar.value() - delta.y()))
-                    self.minimap.update()
-                    return True
-
-            elif etype == QEvent.Type.MouseButtonRelease:
-                if self.is_painting_tiles:
-                    self.is_painting_tiles = False
-                    return True
-
-                if self.is_dragging_items:
-                    self.is_dragging_items = False
-
-                    topo_config = SETTINGS.get("topography", {})
-                    hex_size = topo_config.get("hex_size", 55.0)
-
-                    occupied_hexes = {(it.q, it.r) for it in self.scene.items() if
-                                      isinstance(it, SpatialItem) and it not in self.selected_items}
-
-                    for item in self.selected_items:
-                        target_q, target_r = pixel_to_hex(item.pos().x(), item.pos().y(), hex_size)
-
-                        final_q, final_r = target_q, target_r
-                        for sq, sr in get_spiral_hex_ring(target_q, target_r, radius=5):
-                            if (sq, sr) not in occupied_hexes:
-                                final_q, final_r = sq, sr
-                                break
-
-                        item.q, item.r = final_q, final_r
-                        item.setPos(hex_to_pixel(final_q, final_r, hex_size))
-                        occupied_hexes.add((final_q, final_r))
-
-                    self.save_layout_state()
-                    self.scene.update()
-                    self.minimap.update()
-                    return True
-
-                if self.is_selecting_box:
-                    self.is_selecting_box = False
-                    self.rubber_band.hide()
-                    rect = QRectF(self.view.mapToScene(self.rubber_band.geometry()))
-
-                    modifiers = QApplication.keyboardModifiers()
-                    if not (modifiers & Qt.KeyboardModifier.ControlModifier):
-                        self.scene.clearSelection()
-
-                    items_in_rect = self.scene.items(rect)
-                    for item in items_in_rect:
-                        if isinstance(item, SpatialItem):
-                            item.setSelected(True)
-                    self.selected_items = [i for i in self.scene.selectedItems() if isinstance(i, SpatialItem)]
-                    self.scene.update()
-                    return True
-
-                if self.is_panning_view:
-                    self.is_panning_view = False
-                    self.view.setCursor(Qt.CursorShape.ArrowCursor)
-                    return True
-
-            elif etype == QEvent.Type.Wheel:
-                wheel_event = event
-                angle = wheel_event.angleDelta().y()
-                factor = 1.15 if angle > 0 else 1.0 / 1.15
-
-                current_scale = self.view.transform().m11()
-                if (factor > 1.0 and current_scale < ZOOM_MAX) or (factor < 1.0 and current_scale > ZOOM_MIN):
-                    self.view.scale(factor, factor)
-                    self.minimap.update()
-                return True
-
-        return super().eventFilter(obj, event)
-
-    def show_context_menu(self, pos: QPointF):
-        scene_pos = self.view.mapToScene(pos.toPoint())
-        topo_config = SETTINGS.get("topography", {})
-        hex_size = topo_config.get("hex_size", 55.0)
-        q, r = pixel_to_hex(scene_pos.x(), scene_pos.y(), hex_size)
-
-        menu = QMenu(self)
-        menu.setStyleSheet("background-color: #241c14; color: #f0e0d0; border: 1px solid #4a3828;")
-
-        add_folder_action = menu.addAction("📁 Add Folder Link Here")
-        add_file_action = menu.addAction("📄 Add File Link Here")
-
-        action = menu.exec(self.view.mapToGlobal(pos.toPoint()))
-
-        if action == add_folder_action:
-            self.add_item(q, r, is_dir=True)
-        elif action == add_file_action:
-            self.add_item(q, r, is_dir=False)
-
-    def add_item(self, q: int, r: int, is_dir: bool):
-        topo_config = SETTINGS.get("topography", {})
-        hex_size = topo_config.get("hex_size", 55.0)
-        occupied_hexes = {(it.q, it.r) for it in self.scene.items() if isinstance(it, SpatialItem)}
-
-        final_q, final_r = q, r
-        for sq, sr in get_spiral_hex_ring(q, r, radius=5):
-            if (sq, sr) not in occupied_hexes:
-                final_q, final_r = sq, sr
-                break
-
-        if is_dir:
-            path = QFileDialog.getExistingDirectory(self, "Select Folder to Map")
-        else:
-            path, _ = QFileDialog.getOpenFileName(self, "Select File to Map")
-
-        if not path:
-            return
-
-        item = SpatialItem(path, is_dir, final_q, final_r)
-        self.scene.addItem(item)
-        self.scene.clearSelection()
-        item.setSelected(True)
-        self.selected_items = [item]
-        self.save_layout_state()
-        self.scene.update()
-        self.minimap.update()
-
-    def keyPressEvent(self, event: QKeyEvent):
-        if event.key() == Qt.Key.Key_Delete or event.key() == Qt.Key.Key_Backspace:
-            selected = [i for i in self.scene.selectedItems() if isinstance(i, SpatialItem)]
-            for item in selected:
-                self.scene.removeItem(item)
-            self.selected_items.clear()
-            self.save_layout_state()
-            self.scene.update()
-            self.minimap.update()
-            event.accept()
-            return
-        super().keyPressEvent(event)
-
-    def save_layout_state(self):
-        data = {
-            "items": [],
-            "hex_grid": []
-        }
-        for item in self.scene.items():
-            if isinstance(item, SpatialItem):
-                data["items"].append({
-                    "path": item.path,
-                    "is_dir": item.is_dir,
-                    "q": item.q,
-                    "r": item.r
-                })
-        for (q, r), tile in self.hex_grid_data.items():
-            terrain = tile.get("terrain")
-            if terrain and terrain != "ocean":
-                data["hex_grid"].append({
-                    "q": q,
-                    "r": r,
-                    "terrain": terrain,
-                    "region_id": tile.get("region_id")
-                })
-
+    def save_global_state(self, modality):
         try:
-            with open(STATE_FILE, "w", encoding="utf-8") as f:
-                json.dump(data, f, indent=2)
+            with open(GLOBAL_STATE_FILE, "w", encoding="utf-8") as f:
+                json.dump({"last_modality": modality}, f, indent=2)
         except Exception as e:
-            print(f"Error saving layout state: {e}")
+            print(f"Error saving global state: {e}")
 
-    def load_layout_state(self):
-        if not os.path.exists(STATE_FILE):
-            return
-        try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
+    def accept(self):
+        self.selected_folder = self.combo.currentData()
+        self.save_global_state(self.selected_folder)
 
-                for hex_entry in data.get("hex_grid", []):
-                    q = hex_entry.get("q")
-                    r = hex_entry.get("r")
-                    terrain = hex_entry.get("terrain", "land")
-                    reg = hex_entry.get("region_id")
-                    if q is not None and r is not None:
-                        self.set_hex_terrain(q, r, terrain, reg)
-
-                for entry in data.get("items", []):
-                    path = entry.get("path")
-                    q = entry.get("q", 0)
-                    r = entry.get("r", 0)
-                    if path and os.path.exists(path):
-                        item = SpatialItem(path, entry.get("is_dir", False), q, r)
-                        self.scene.addItem(item)
-        except Exception as e:
-            print(f"Error loading layout state: {e}")
+        if self.selected_folder == "image_modality":
+            self.hd_image_path = self.image_path_edit.text()
+            if not self.hd_image_path or not os.path.exists(self.hd_image_path):
+                QMessageBox.warning(self, "Error", "Please select a valid HD map image file.")
+                return
+        super().accept()
 
 
 if __name__ == "__main__":
     app = QApplication(sys.argv)
     app.setStyle("Fusion")
 
-    font = QFont(SETTINGS.get("appearance", {}).get("font_family", "Georgia"))
-    font.setPointSize(11)
-    app.setFont(font)
+    dialog = ModalitySelectorDialog()
+    if dialog.exec() == QDialog.DialogCode.Accepted:
+        folder = dialog.selected_folder
+        img_path = dialog.hd_image_path
 
-    window = MainWindow()
-    window.show()
+        if folder == "hex_modality":
+            from hex_modality.app import run_modality
 
-    sys.exit(app.exec())
+            run_modality()
+        elif folder == "image_modality":
+            from image_modality.app import run_modality
+
+            run_modality(hd_image_path=img_path)
+    else:
+        sys.exit(0)
