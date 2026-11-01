@@ -6,13 +6,14 @@ from pathlib import Path
 from typing import Optional
 import yaml
 
-from PyQt6.QtCore import Qt, QPointF, QRectF, QEvent
+from PyQt6.QtCore import Qt, QPointF, QRectF, QEvent, pyqtSignal
 from PyQt6.QtGui import QColor, QFont, QPainter, QPen, QBrush, QPixmap, QMouseEvent, QKeyEvent, QPolygonF
 from PyQt6.QtWidgets import (
     QApplication, QMainWindow, QGraphicsView, QGraphicsScene,
     QGraphicsItem, QMenu, QVBoxLayout,
     QLabel, QPushButton, QFileDialog,
-    QGraphicsDropShadowEffect, QFrame, QHBoxLayout, QWidget, QRubberBand, QDialog
+    QGraphicsDropShadowEffect, QFrame, QHBoxLayout, QWidget, QRubberBand, QDialog,
+    QTabWidget, QLineEdit, QFormLayout, QMessageBox
 )
 
 APP_PATH = Path(__file__).parent
@@ -56,6 +57,35 @@ def get_system_icon(path: str, is_dir: bool) -> QPixmap:
     return pixmap
 
 
+def get_portal_icon(custom_icon_path: str = "") -> QPixmap:
+    if custom_icon_path and os.path.exists(custom_icon_path):
+        pix = QPixmap(custom_icon_path)
+        if not pix.isNull():
+            return pix
+
+    # Default bluish oval portal icon
+    pixmap = QPixmap(64, 64)
+    pixmap.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pixmap)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+
+    # Bluish glowing oval gradient / styling
+    painter.setBrush(QBrush(QColor(41, 128, 185, 220)))
+    painter.setPen(QPen(QColor(142, 68, 173), 2.5))
+    painter.drawEllipse(4, 10, 56, 44)
+
+    # Inner swirl/ring effect
+    painter.setBrush(QBrush(QColor(52, 152, 219, 150)))
+    painter.setPen(QPen(QColor(255, 255, 255, 180), 1.5))
+    painter.drawEllipse(14, 18, 36, 28)
+
+    painter.setPen(QColor(255, 255, 255))
+    painter.setFont(QFont("Arial", 18, QFont.Weight.Bold))
+    painter.drawText(pixmap.rect(), Qt.AlignmentFlag.AlignCenter, "🌀")
+    painter.end()
+    return pixmap
+
+
 class HelpDialog(QDialog):
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -71,13 +101,13 @@ class HelpDialog(QDialog):
         shortcuts_text = (
             "• **Left Click & Drag (Empty Space):** Pan / Move around the map.\n\n"
             "• **Left Click (Item):** Select an item.\n\n"
-            "• **Ctrl + Click:** Multi-select items or add/remove from selection.\n\n"
-            "• **Ctrl + Drag Box:** Box-select multiple items in bulk.\n\n"
-            "• **Drag Selected Items:** Move all selected items together.\n\n"
-            "• **Ctrl + Plus (+) / Ctrl + Scroll Up:** Resize selected items larger.\n\n"
-            "• **Ctrl + Minus (-) / Ctrl + Scroll Down:** Resize selected items smaller.\n\n"
-            "• **Delete / Backspace:** Remove selected items from the map.\n\n"
-            "• **Double Click Item:** Open file or folder."
+            "• **Ctrl + Click:** Multi-select items.\n\n"
+            "• **Ctrl + Drag Box:** Box-select multiple items.\n\n"
+            "• **Drag Selected Items:** Move selected items together.\n\n"
+            "• **Ctrl + Plus/Minus or Scroll:** Resize selected items.\n\n"
+            "• **Delete / Backspace:** Remove selected items.\n\n"
+            "• **Double Click File/Folder:** Open system file or directory.\n\n"
+            "• **Double Click Portal:** Open target map environment in a new tab."
         )
 
         help_label = QLabel(shortcuts_text)
@@ -92,6 +122,121 @@ class HelpDialog(QDialog):
         close_btn.clicked.connect(self.accept)
         layout.addWidget(close_btn)
         self.setLayout(layout)
+
+
+class PortalDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setWindowTitle("Configure Portal")
+        self.resize(440, 250)
+        self.setStyleSheet("background-color: #241c14; color: #f0e0d0;")
+        self.icon_path = ""
+        self.target_map = ""
+
+        layout = QFormLayout()
+
+        title = QLabel("🌀 Create New Portal")
+        title.setStyleSheet("font-size: 13pt; font-weight: bold; color: #e0d0b0; margin-bottom: 10px;")
+        layout.addRow(title)
+
+        self.name_input = QLineEdit()
+        self.name_input.setPlaceholderText("e.g., Project Alpha")
+        self.name_input.setStyleSheet(
+            "background-color: #3c2e20; color: #fff; padding: 5px; border: 1px solid #5a4430;")
+        layout.addRow("Portal Name:", self.name_input)
+
+        icon_layout = QHBoxLayout()
+        self.icon_label = QLabel("Default (Bluish Oval)")
+        self.icon_label.setStyleSheet("color: #b0a090; font-style: italic;")
+        icon_btn = QPushButton("Browse Icon...")
+        icon_btn.setStyleSheet("background-color: #4a3828; color: #fff; padding: 4px 8px;")
+        icon_btn.clicked.connect(self.browse_icon)
+        icon_layout.addWidget(self.icon_label)
+        icon_layout.addWidget(icon_btn)
+        layout.addRow("Custom Icon:", icon_layout)
+
+        map_layout = QHBoxLayout()
+        self.map_label = QLabel("None (New Map)")
+        self.map_label.setStyleSheet("color: #b0a090; font-style: italic;")
+        map_btn = QPushButton("Select Map / Image...")
+        map_btn.setStyleSheet("background-color: #4a3828; color: #fff; padding: 4px 8px;")
+        map_btn.clicked.connect(self.browse_map)
+        map_layout.addWidget(self.map_label)
+        map_layout.addWidget(map_btn)
+        layout.addRow("Target Map:", map_layout)
+
+        btn_layout = QHBoxLayout()
+        create_btn = QPushButton("Create Portal")
+        create_btn.setStyleSheet("background-color: #2980b9; color: #fff; font-weight: bold; padding: 6px 14px;")
+        create_btn.clicked.connect(self.validate_and_accept)
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setStyleSheet("background-color: #555; color: #fff; padding: 6px 14px;")
+        cancel_btn.clicked.connect(self.reject)
+
+        btn_layout.addStretch()
+        btn_layout.addWidget(cancel_btn)
+        btn_layout.addWidget(create_btn)
+        layout.addRow(btn_layout)
+
+        self.setLayout(layout)
+
+    def browse_icon(self):
+        MAPS_DIR.mkdir(parents=True, exist_ok=True)
+        path, _ = QFileDialog.getOpenFileName(self, "Select Custom Icon", str(MAPS_DIR), "Images (*.png *.jpg *.jpeg)")
+        if path:
+            self.icon_path = path
+            self.icon_label.setText(Path(path).name)
+
+    def browse_map(self):
+        MAPS_DIR.mkdir(parents=True, exist_ok=True)
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Target Map Image or State",
+            str(MAPS_DIR),
+            "Map Files & Images (*.json *.png *.jpg *.jpeg *.bmp)"
+        )
+        if path:
+            chosen_path = Path(path).resolve()
+            maps_dir_resolved = MAPS_DIR.resolve()
+
+            if chosen_path.suffix.lower() == ".json":
+                self.target_map = str(chosen_path)
+                self.map_label.setText(chosen_path.name)
+            else:
+                # It's an image file! Copy to maps dir if needed and create corresponding JSON state file
+                if maps_dir_resolved not in chosen_path.parents:
+                    dest_path = MAPS_DIR / chosen_path.name
+                    if not dest_path.exists():
+                        shutil.copy(str(chosen_path), str(dest_path))
+                    img_target = str(dest_path)
+                else:
+                    img_target = str(chosen_path)
+
+                json_name = f"map_{chosen_path.stem}.json"
+                json_path = MAPS_DIR / json_name
+                self.target_map = str(json_path)
+                self.map_label.setText(f"{chosen_path.name} (Map)")
+
+                if not json_path.exists():
+                    initial_data = {"hd_image_path": img_target, "items": []}
+                    with open(json_path, "w", encoding="utf-8") as f:
+                        json.dump(initial_data, f, indent=2)
+        else:
+            text, ok = QFileDialog.getSaveFileName(self, "Create New Target Map State", str(MAPS_DIR),
+                                                   "JSON Files (*.json)")
+            if ok and text:
+                self.target_map = text if text.endswith(".json") else text + ".json"
+                self.map_label.setText(Path(self.target_map).name)
+
+    def validate_and_accept(self):
+        if not self.name_input.text().strip():
+            QMessageBox.warning(self, "Validation Error", "Please provide a name for the portal.")
+            return
+        if not self.target_map:
+            MAPS_DIR.mkdir(parents=True, exist_ok=True)
+            safe_name = "".join(c if c.isalnum() else "_" for c in self.name_input.text().strip()).lower()
+            self.target_map = str(MAPS_DIR / f"map_{safe_name}.json")
+        self.accept()
 
 
 class ImageMarkerItem(QGraphicsItem):
@@ -121,7 +266,6 @@ class ImageMarkerItem(QGraphicsItem):
         return QRectF(-w / 2, -h / 2, w, h)
 
     def paint(self, painter: QPainter, option, widget):
-        view = self.scene().views()[0] if self.scene() else None
         painter.setOpacity(1.0 if self.isSelected() else 0.85)
 
         w = self.base_width * self.item_scale
@@ -172,10 +316,83 @@ class ImageMarkerItem(QGraphicsItem):
         super().mouseDoubleClickEvent(event)
 
 
-class MiniMapWidget(QWidget):
-    def __init__(self, main_window, parent=None):
+class PortalMarkerItem(QGraphicsItem):
+    open_portal = pyqtSignal(str, str)
+
+    def __init__(self, name: str, target_map: str, icon_path: str, x: float, y: float, scale_factor: float = 1.0,
+                 parent=None):
         super().__init__(parent)
-        self.mw = main_window
+        self.name = name
+        self.target_map = target_map
+        self.icon_path = icon_path
+        self.setPos(x, y)
+        self.base_width = 90
+        self.base_height = 95
+        self.item_scale = scale_factor
+
+        self.setZValue(2)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+        self._pixmap_cache: Optional[QPixmap] = None
+
+        shadow = QGraphicsDropShadowEffect()
+        shadow.setBlurRadius(18)
+        shadow.setColor(QColor(41, 128, 185, 200))
+        shadow.setOffset(0, 0)
+        self.setGraphicsEffect(shadow)
+
+    def boundingRect(self) -> QRectF:
+        w = self.base_width * self.item_scale
+        h = self.base_height * self.item_scale
+        return QRectF(-w / 2, -h / 2, w, h)
+
+    def paint(self, painter: QPainter, option, widget):
+        painter.setOpacity(1.0 if self.isSelected() else 0.9)
+
+        w = self.base_width * self.item_scale
+        h = self.base_height * self.item_scale
+
+        painter.setBrush(QBrush(QColor(30, 45, 60, 210)))
+        painter.setPen(QPen(QColor(52, 152, 219), 2.5) if self.isSelected() else QPen(QColor(41, 128, 185, 200), 1.5))
+        painter.drawRoundedRect(QRectF(-w / 2, -h / 2, w, h - (30 * self.item_scale)), 12 * self.item_scale,
+                                12 * self.item_scale)
+
+        if not self._pixmap_cache:
+            self._pixmap_cache = get_portal_icon(self.icon_path)
+
+        icon_size = int(54 * self.item_scale)
+        scaled_pixmap = self._pixmap_cache.scaled(icon_size, icon_size, Qt.AspectRatioMode.KeepAspectRatio,
+                                                  Qt.TransformationMode.SmoothTransformation)
+
+        painter.drawPixmap(QPointF(-scaled_pixmap.width() / 2, -h / 2 + (5 * self.item_scale)), scaled_pixmap)
+
+        painter.setBrush(QBrush(QColor(15, 25, 35, 240)))
+        painter.setPen(QPen(QColor(52, 152, 219), 1) if self.isSelected() else QPen(QColor(41, 128, 185), 1))
+
+        text_bg_height = 32 * self.item_scale
+        text_bg_rect = QRectF(-w / 2, h / 2 - text_bg_height - (4 * self.item_scale), w, text_bg_height)
+        painter.drawRoundedRect(text_bg_rect, 5, 5)
+
+        painter.setPen(QColor(230, 245, 255))
+        font_size = max(8, int(10 * self.item_scale))
+        font = QFont(SETTINGS.get("appearance", {}).get("font_family", "Georgia"), font_size)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.drawText(text_bg_rect, Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap, self.name)
+
+    def mouseDoubleClickEvent(self, event: QMouseEvent):
+        if event.button() == Qt.MouseButton.LeftButton:
+            scene = self.scene()
+            if scene and hasattr(scene, "parent_tab"):
+                scene.parent_tab.open_portal_tab(self.target_map, self.name)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+
+class MiniMapWidget(QWidget):
+    def __init__(self, map_tab, parent=None):
+        super().__init__(parent)
+        self.tab = map_tab
         self.setFixedSize(180, 140)
         self.setStyleSheet("background-color: rgba(26, 21, 16, 210); border: 2px solid #5a4430; border-radius: 6px;")
 
@@ -183,23 +400,29 @@ class MiniMapWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)
 
-        if self.mw.hd_pixmap and not self.mw.hd_pixmap.isNull():
-            painter.drawPixmap(self.rect(), self.mw.hd_pixmap)
+        if self.tab.hd_pixmap and not self.tab.hd_pixmap.isNull():
+            painter.drawPixmap(self.rect(), self.tab.hd_pixmap)
         else:
             painter.fillRect(self.rect(), QBrush(QColor(27, 54, 93)))
 
-        img_w = self.mw.hd_pixmap.width() if (self.mw.hd_pixmap and not self.mw.hd_pixmap.isNull()) else 1000
-        img_h = self.mw.hd_pixmap.height() if (self.mw.hd_pixmap and not self.mw.hd_pixmap.isNull()) else 1000
+        img_w = self.tab.hd_pixmap.width() if (self.tab.hd_pixmap and not self.tab.hd_pixmap.isNull()) else 1000
+        img_h = self.tab.hd_pixmap.height() if (self.tab.hd_pixmap and not self.tab.hd_pixmap.isNull()) else 1000
 
-        painter.setBrush(QBrush(QColor(218, 165, 32)))
-        painter.setPen(QPen(QColor(0, 0, 0), 1))
-        for item in self.mw.scene.items():
+        for item in self.tab.scene.items():
             if isinstance(item, ImageMarkerItem):
+                painter.setBrush(QBrush(QColor(218, 165, 32)))
+                painter.setPen(QPen(QColor(0, 0, 0), 1))
                 mx = (item.pos().x() / img_w) * self.width()
                 my = (item.pos().y() / img_h) * self.height()
                 painter.drawEllipse(QPointF(mx, my), 3.5, 3.5)
+            elif isinstance(item, PortalMarkerItem):
+                painter.setBrush(QBrush(QColor(52, 152, 219)))
+                painter.setPen(QPen(QColor(255, 255, 255), 1))
+                mx = (item.pos().x() / img_w) * self.width()
+                my = (item.pos().y() / img_h) * self.height()
+                painter.drawEllipse(QPointF(mx, my), 4.5, 4.5)
 
-        view = self.mw.view
+        view = self.tab.view
         viewport_scene_rect = view.mapToScene(view.viewport().rect()).boundingRect()
 
         tl_x = (viewport_scene_rect.left() / img_w) * self.width()
@@ -219,40 +442,29 @@ class MiniMapWidget(QWidget):
         self.pan_to_click(event.position())
 
     def pan_to_click(self, pos: QPointF):
-        if self.mw.hd_pixmap and not self.mw.hd_pixmap.isNull():
-            img_w = self.mw.hd_pixmap.width()
-            img_h = self.mw.hd_pixmap.height()
+        if self.tab.hd_pixmap and not self.tab.hd_pixmap.isNull():
+            img_w = self.tab.hd_pixmap.width()
+            img_h = self.tab.hd_pixmap.height()
             wx = (pos.x() / self.width()) * img_w
             wy = (pos.y() / self.height()) * img_h
-            self.mw.view.centerOn(wx, wy)
+            self.tab.view.centerOn(wx, wy)
             self.update()
 
 
-class MainWindow(QMainWindow):
-    def __init__(self, hd_image_path=""):
-        super().__init__()
-        self.hd_image_path = hd_image_path
+class MapTab(QWidget):
+    def __init__(self, state_file_path: str, main_window, parent=None):
+        super().__init__(parent)
+        self.state_file_path = Path(state_file_path)
+        self.main_window = main_window
+        self.hd_image_path = ""
         self.hd_pixmap = None
-        self.setWindowTitle("The File Land - HD Image Modality")
-        self.resize(1200, 800)
 
         self.scene = QGraphicsScene()
-
-        if hd_image_path and os.path.exists(hd_image_path):
-            self.hd_image_path = hd_image_path
-        else:
-            self.hd_image_path = self.get_path_from_state()
-
-        if self.hd_image_path and os.path.exists(self.hd_image_path):
-            self.hd_pixmap = QPixmap(self.hd_image_path)
-            if not self.hd_pixmap.isNull():
-                bg_item = self.scene.addPixmap(self.hd_pixmap)
-                bg_item.setZValue(-10)
-                self.scene.setSceneRect(QRectF(self.hd_pixmap.rect()))
+        self.scene.parent_tab = self
 
         self.load_state()
 
-        self.view = QGraphicsView(self.scene)
+        self.view = QGraphicsView(self.scene, self)
         self.view.setRenderHint(QPainter.RenderHint.Antialiasing)
         self.view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
@@ -260,15 +472,16 @@ class MainWindow(QMainWindow):
         if self.hd_pixmap and not self.hd_pixmap.isNull():
             self.view.centerOn(self.hd_pixmap.width() / 2, self.hd_pixmap.height() / 2)
 
-        central = QWidget()
-        layout = QVBoxLayout(central)
+        layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
 
         top_bar = QFrame()
         top_bar.setStyleSheet("background-color: #241c14; border-bottom: 1px solid #3c2e20;")
         top_layout = QHBoxLayout(top_bar)
-        title = QLabel("🗺️ HD Image Map Explorer (Bulk Move & Resize Support)")
-        title.setStyleSheet("color: #e0d0b0; font-weight: bold; font-size: 14pt;")
+
+        map_title = f"🗺️ Map: {self.state_file_path.stem.replace('map_', '').replace('_', ' ').title()}"
+        title = QLabel(map_title)
+        title.setStyleSheet("color: #e0d0b0; font-weight: bold; font-size: 13pt;")
         top_layout.addWidget(title)
 
         top_layout.addStretch()
@@ -279,16 +492,8 @@ class MainWindow(QMainWindow):
 
         layout.addWidget(top_bar)
         layout.addWidget(self.view)
-        self.setCentralWidget(central)
 
         self.minimap = MiniMapWidget(self, self.view)
-
-        self.help_btn = QPushButton("❓ Help", self)
-        self.help_btn.setStyleSheet(
-            "background-color: rgba(36, 28, 20, 230); color: #f0e0d0; border: 1px solid #5a4430; "
-            "padding: 6px 12px; border-radius: 6px; font-weight: bold;"
-        )
-        self.help_btn.clicked.connect(self.show_help_dialog)
 
         self.selected_items = []
         self.is_dragging = False
@@ -304,21 +509,10 @@ class MainWindow(QMainWindow):
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
-        self.minimap.move(self.width() - self.minimap.width() - 20, self.height() - self.minimap.height() - 40)
-        self.help_btn.move(20, self.height() - self.help_btn.height() - 40)
+        self.minimap.move(self.width() - self.minimap.width() - 20, self.height() - self.minimap.height() - 20)
 
-    def show_help_dialog(self):
-        dlg = HelpDialog(self)
-        dlg.exec()
-
-    def get_path_from_state(self) -> str:
-        if not STATE_FILE.exists():
-            return ""
-        try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
-                return json.load(f).get("hd_image_path", "")
-        except Exception:
-            return ""
+    def open_portal_tab(self, target_map: str, portal_name: str):
+        self.main_window.open_map_tab(target_map, portal_name)
 
     def change_background_image(self):
         MAPS_DIR.mkdir(parents=True, exist_ok=True)
@@ -352,7 +546,7 @@ class MainWindow(QMainWindow):
             self.hd_pixmap = QPixmap(self.hd_image_path)
             if not self.hd_pixmap.isNull():
                 for item in self.scene.items():
-                    if isinstance(item, QGraphicsItem) and not isinstance(item, ImageMarkerItem):
+                    if not isinstance(item, (ImageMarkerItem, PortalMarkerItem)):
                         self.scene.removeItem(item)
                 bg_item = self.scene.addPixmap(self.hd_pixmap)
                 bg_item.setZValue(-10)
@@ -374,7 +568,7 @@ class MainWindow(QMainWindow):
                     self.show_menu(event.position())
                     return True
                 elif event.button() == Qt.MouseButton.LeftButton:
-                    if clicked and isinstance(clicked, ImageMarkerItem):
+                    if clicked and isinstance(clicked, (ImageMarkerItem, PortalMarkerItem)):
                         if modifiers & Qt.KeyboardModifier.ControlModifier:
                             clicked.setSelected(not clicked.isSelected())
                         elif modifiers & Qt.KeyboardModifier.ShiftModifier:
@@ -384,7 +578,8 @@ class MainWindow(QMainWindow):
                                 self.scene.clearSelection()
                                 clicked.setSelected(True)
 
-                        self.selected_items = [i for i in self.scene.selectedItems() if isinstance(i, ImageMarkerItem)]
+                        self.selected_items = [i for i in self.scene.selectedItems() if
+                                               isinstance(i, (ImageMarkerItem, PortalMarkerItem))]
                         if clicked.isSelected():
                             self.is_dragging = True
                             self.drag_start = scene_pos
@@ -436,9 +631,10 @@ class MainWindow(QMainWindow):
                     if not (QApplication.keyboardModifiers() & Qt.KeyboardModifier.ControlModifier):
                         self.scene.clearSelection()
                     for item in self.scene.items(rect):
-                        if isinstance(item, ImageMarkerItem):
+                        if isinstance(item, (ImageMarkerItem, PortalMarkerItem)):
                             item.setSelected(True)
-                    self.selected_items = [i for i in self.scene.selectedItems() if isinstance(i, ImageMarkerItem)]
+                    self.selected_items = [i for i in self.scene.selectedItems() if
+                                           isinstance(i, (ImageMarkerItem, PortalMarkerItem))]
                     self.scene.update()
                     return True
                 if self.is_panning:
@@ -448,7 +644,8 @@ class MainWindow(QMainWindow):
             elif etype == QEvent.Type.Wheel:
                 modifiers = QApplication.keyboardModifiers()
                 if modifiers & Qt.KeyboardModifier.ControlModifier:
-                    selected = [i for i in self.scene.selectedItems() if isinstance(i, ImageMarkerItem)]
+                    selected = [i for i in self.scene.selectedItems() if
+                                isinstance(i, (ImageMarkerItem, PortalMarkerItem))]
                     if selected:
                         factor = 1.08 if event.angleDelta().y() > 0 else (1.0 / 1.08)
                         for item in selected:
@@ -469,7 +666,7 @@ class MainWindow(QMainWindow):
         modifiers = QApplication.keyboardModifiers()
         if modifiers & Qt.KeyboardModifier.ControlModifier and event.key() in (Qt.Key.Key_Plus, Qt.Key.Key_Equal,
                                                                                Qt.Key.Key_Minus):
-            selected = [i for i in self.scene.selectedItems() if isinstance(i, ImageMarkerItem)]
+            selected = [i for i in self.scene.selectedItems() if isinstance(i, (ImageMarkerItem, PortalMarkerItem))]
             if selected:
                 factor = 1.12 if event.key() in (Qt.Key.Key_Plus, Qt.Key.Key_Equal) else (1.0 / 1.12)
                 for item in selected:
@@ -481,7 +678,7 @@ class MainWindow(QMainWindow):
                 return
 
         if event.key() in (Qt.Key.Key_Delete, Qt.Key.Key_Backspace):
-            for item in [i for i in self.scene.selectedItems() if isinstance(i, ImageMarkerItem)]:
+            for item in [i for i in self.scene.selectedItems() if isinstance(i, (ImageMarkerItem, PortalMarkerItem))]:
                 self.scene.removeItem(item)
             self.selected_items.clear()
             self.save_state()
@@ -497,10 +694,12 @@ class MainWindow(QMainWindow):
         menu.setStyleSheet("background-color: #241c14; color: #f0e0d0; border: 1px solid #4a3828;")
         f_act = menu.addAction("📁 Add Folder Link")
         i_act = menu.addAction("📄 Add File Link")
+        p_act = menu.addAction("🌀 Add Portal")
+
         action = menu.exec(self.view.mapToGlobal(pos.toPoint()))
-        if action in (f_act, i_act):
+        if action == f_act or action == i_act:
             path = QFileDialog.getExistingDirectory(self, "Select Folder") if action == f_act else \
-            QFileDialog.getOpenFileName(self, "Select File")[0]
+                QFileDialog.getOpenFileName(self, "Select File")[0]
             if path:
                 item = ImageMarkerItem(path, action == f_act, scene_pos.x(), scene_pos.y())
                 self.scene.addItem(item)
@@ -510,34 +709,85 @@ class MainWindow(QMainWindow):
                 self.save_state()
                 self.scene.update()
                 self.minimap.update()
+        elif action == p_act:
+            dlg = PortalDialog(self)
+            if dlg.exec() == QDialog.DialogCode.Accepted:
+                portal_item = PortalMarkerItem(
+                    dlg.name_input.text().strip(),
+                    dlg.target_map,
+                    dlg.icon_path,
+                    scene_pos.x(),
+                    scene_pos.y()
+                )
+                self.scene.addItem(portal_item)
+                self.scene.clearSelection()
+                portal_item.setSelected(True)
+                self.selected_items = [portal_item]
+                self.save_state()
+                self.scene.update()
+                self.minimap.update()
 
     def save_state(self):
         data = {
             "hd_image_path": self.hd_image_path,
-            "items": [{
-                "path": i.path,
-                "is_dir": i.is_dir,
-                "x": i.pos().x(),
-                "y": i.pos().y(),
-                "scale": i.item_scale
-            } for i in self.scene.items() if isinstance(i, ImageMarkerItem)]
+            "items": [
+                {
+                    "type": "marker",
+                    "path": i.path,
+                    "is_dir": i.is_dir,
+                    "x": i.pos().x(),
+                    "y": i.pos().y(),
+                    "scale": i.item_scale
+                } if isinstance(i, ImageMarkerItem) else {
+                    "type": "portal",
+                    "name": i.name,
+                    "target_map": i.target_map,
+                    "icon_path": i.icon_path,
+                    "x": i.pos().x(),
+                    "y": i.pos().y(),
+                    "scale": i.item_scale
+                }
+                for i in self.scene.items() if isinstance(i, (ImageMarkerItem, PortalMarkerItem))
+            ]
         }
         try:
-            with open(STATE_FILE, "w", encoding="utf-8") as f:
+            MAPS_DIR.mkdir(parents=True, exist_ok=True)
+            with open(self.state_file_path, "w", encoding="utf-8") as f:
                 json.dump(data, f, indent=2)
         except Exception as e:
             print(f"Error saving state: {e}")
 
     def load_state(self):
-        if not os.path.exists(STATE_FILE): return
+        if not self.state_file_path.exists():
+            return
         try:
-            with open(STATE_FILE, "r", encoding="utf-8") as f:
+            with open(self.state_file_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
+                self.hd_image_path = data.get("hd_image_path", "")
+                if self.hd_image_path and os.path.exists(self.hd_image_path):
+                    self.hd_pixmap = QPixmap(self.hd_image_path)
+                    if not self.hd_pixmap.isNull():
+                        bg_item = self.scene.addPixmap(self.hd_pixmap)
+                        bg_item.setZValue(-10)
+                        self.scene.setSceneRect(QRectF(self.hd_pixmap.rect()))
+
                 for entry in data.get("items", []):
-                    if os.path.exists(entry["path"]):
-                        item = ImageMarkerItem(
-                            entry["path"],
-                            entry["is_dir"],
+                    item_type = entry.get("type", "marker")
+                    if item_type == "marker":
+                        if os.path.exists(entry["path"]):
+                            item = ImageMarkerItem(
+                                entry["path"],
+                                entry["is_dir"],
+                                entry["x"],
+                                entry["y"],
+                                scale_factor=entry.get("scale", 1.0)
+                            )
+                            self.scene.addItem(item)
+                    elif item_type == "portal":
+                        item = PortalMarkerItem(
+                            entry["name"],
+                            entry["target_map"],
+                            entry.get("icon_path", ""),
                             entry["x"],
                             entry["y"],
                             scale_factor=entry.get("scale", 1.0)
@@ -547,6 +797,72 @@ class MainWindow(QMainWindow):
             print(f"Error loading state: {e}")
 
 
+class MainWindow(QMainWindow):
+    def __init__(self, hd_image_path=""):
+        super().__init__()
+        self.setWindowTitle("The File Land - Portal Modality")
+        self.resize(1200, 800)
+
+        self.tab_widget = QTabWidget()
+        self.tab_widget.setTabsClosable(True)
+        self.tab_widget.tabCloseRequested.connect(self.close_tab)
+        self.tab_widget.setStyleSheet(
+            "QTabWidget::pane { border: 1px solid #3c2e20; background: #1a1510; }"
+            "QTabBar::tab { background: #241c14; color: #f0e0d0; padding: 8px 16px; border: 1px solid #3c2e20; border-bottom: none; }"
+            "QTabBar::tab:selected { background: #3c2e20; color: #fff; font-weight: bold; }"
+        )
+
+        central = QWidget()
+        layout = QVBoxLayout(central)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addWidget(self.tab_widget)
+        self.setCentralWidget(central)
+
+        self.help_btn = QPushButton("❓ Help", self)
+        self.help_btn.setStyleSheet(
+            "background-color: rgba(36, 28, 20, 230); color: #f0e0d0; border: 1px solid #5a4430; "
+            "padding: 6px 12px; border-radius: 6px; font-weight: bold;"
+        )
+        self.help_btn.clicked.connect(self.show_help_dialog)
+
+        MAPS_DIR.mkdir(parents=True, exist_ok=True)
+        main_state = STATE_FILE if STATE_FILE.exists() else (MAPS_DIR / "main_map.json")
+        if not main_state.exists() and hd_image_path:
+            initial_data = {"hd_image_path": hd_image_path, "items": []}
+            with open(main_state, "w", encoding="utf-8") as f:
+                json.dump(initial_data, f, indent=2)
+
+        self.open_map_tab(str(main_state), "Main Map")
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        self.help_btn.move(20, self.height() - self.help_btn.height() - 40)
+
+    def show_help_dialog(self):
+        dlg = HelpDialog(self)
+        dlg.exec()
+
+    def open_map_tab(self, state_file_path: str, tab_title: str):
+        resolved_path = Path(state_file_path).resolve()
+        for i in range(self.tab_widget.count()):
+            widget = self.tab_widget.widget(i)
+            if isinstance(widget, MapTab) and widget.state_file_path.resolve() == resolved_path:
+                self.tab_widget.setCurrentIndex(i)
+                return
+
+        new_tab = MapTab(str(resolved_path), self)
+        self.tab_widget.addTab(new_tab, tab_title)
+        self.tab_widget.setCurrentWidget(new_tab)
+
+    def close_tab(self, index: int):
+        if self.tab_widget.count() > 1:
+            widget = self.tab_widget.widget(index)
+            self.tab_widget.removeTab(index)
+            widget.deleteLater()
+        else:
+            QMessageBox.information(self, "Cannot Close", "You must keep at least one active map tab open.")
+
+
 def run_modality(hd_image_path=""):
     app = QApplication.instance() or QApplication(sys.argv)
     app.setStyle("Fusion")
@@ -554,3 +870,7 @@ def run_modality(hd_image_path=""):
     window = MainWindow(hd_image_path=hd_image_path)
     window.show()
     sys.exit(app.exec())
+
+
+if __name__ == "__main__":
+    run_modality()
