@@ -1,6 +1,7 @@
 import json
 import os
 import sys
+import shutil
 from pathlib import Path
 from typing import Optional
 import yaml
@@ -17,6 +18,7 @@ from PyQt6.QtWidgets import (
 APP_PATH = Path(__file__).parent
 STATE_FILE = APP_PATH / "layout_state.json"
 SETTINGS_FILE = APP_PATH / "settings.yaml"
+MAPS_DIR = APP_PATH / "maps"
 
 
 def load_settings() -> dict:
@@ -103,7 +105,6 @@ class ImageMarkerItem(QGraphicsItem):
         self.base_height = 95
         self.item_scale = scale_factor
 
-        # Ensure markers always render above the background image
         self.setZValue(1)
         self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
         self._pixmap_cache: Optional[QPixmap] = None
@@ -237,13 +238,11 @@ class MainWindow(QMainWindow):
 
         self.scene = QGraphicsScene()
 
-        # 1. Resolve background image path first (from argument or state file)
         if hd_image_path and os.path.exists(hd_image_path):
             self.hd_image_path = hd_image_path
         else:
             self.hd_image_path = self.get_path_from_state()
 
-        # 2. Setup background pixmap with a negative Z-value so it stays at the back
         if self.hd_image_path and os.path.exists(self.hd_image_path):
             self.hd_pixmap = QPixmap(self.hd_image_path)
             if not self.hd_pixmap.isNull():
@@ -251,7 +250,6 @@ class MainWindow(QMainWindow):
                 bg_item.setZValue(-10)
                 self.scene.setSceneRect(QRectF(self.hd_pixmap.rect()))
 
-        # 3. Load saved marker items afterwards so they render on top of the background
         self.load_state()
 
         self.view = QGraphicsView(self.scene)
@@ -285,7 +283,6 @@ class MainWindow(QMainWindow):
 
         self.minimap = MiniMapWidget(self, self.view)
 
-        # Floating Help Button at bottom-left
         self.help_btn = QPushButton("❓ Help", self)
         self.help_btn.setStyleSheet(
             "background-color: rgba(36, 28, 20, 230); color: #f0e0d0; border: 1px solid #5a4430; "
@@ -324,11 +321,35 @@ class MainWindow(QMainWindow):
             return ""
 
     def change_background_image(self):
-        path, _ = QFileDialog.getOpenFileName(self, "Select HD Map Background Image",
-                                              filter="Images (*.png *.jpg *.jpeg *.bmp)")
+        MAPS_DIR.mkdir(parents=True, exist_ok=True)
+        path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select HD Map Background Image",
+            str(MAPS_DIR),
+            filter="Images (*.png *.jpg *.jpeg *.bmp)"
+        )
         if path:
-            self.hd_image_path = path
-            self.hd_pixmap = QPixmap(path)
+            chosen_path = Path(path).resolve()
+            maps_dir_resolved = MAPS_DIR.resolve()
+
+            if maps_dir_resolved not in chosen_path.parents:
+                dest_path = MAPS_DIR / chosen_path.name
+                if dest_path.exists() and dest_path.resolve() != chosen_path:
+                    base = chosen_path.stem
+                    ext = chosen_path.suffix
+                    counter = 1
+                    while (MAPS_DIR / f"{base}_{counter}{ext}").exists():
+                        counter += 1
+                    dest_path = MAPS_DIR / f"{base}_{counter}{ext}"
+
+                if dest_path.resolve() != chosen_path:
+                    shutil.copy(str(chosen_path), str(dest_path))
+                target_path = str(dest_path)
+            else:
+                target_path = str(chosen_path)
+
+            self.hd_image_path = target_path
+            self.hd_pixmap = QPixmap(self.hd_image_path)
             if not self.hd_pixmap.isNull():
                 for item in self.scene.items():
                     if isinstance(item, QGraphicsItem) and not isinstance(item, ImageMarkerItem):
