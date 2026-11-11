@@ -4,6 +4,13 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Local Slide Creator</title>
+    <!-- Local KaTeX CSS -->
+    <link rel="stylesheet" href="libs/katex.min.css">
+    <!-- Local KaTeX JS -->
+    <script defer src="libs/katex.min.js"></script>
+    <script defer src="libs/auto-render.min.js" onload="renderAllMath()"></script>
+    <!-- Local html2canvas -->
+    <script src="libs/html2canvas.min.js"></script>
     <style>
         :root {
             --bg-color: #0f172a;
@@ -242,6 +249,49 @@
             gap: 8px;
         }
 
+        .export-dropdown {
+            position: relative;
+            display: inline-block;
+            width: 100%;
+        }
+
+        .export-menu {
+            display: none;
+            position: absolute;
+            bottom: 100%;
+            left: 0;
+            right: 0;
+            margin-bottom: 4px;
+            background-color: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
+            z-index: 50;
+            overflow: hidden;
+        }
+
+        .export-menu.show {
+            display: block;
+        }
+
+        .export-menu-item {
+            padding: 10px 12px;
+            font-size: 12px;
+            color: var(--text-main);
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: transparent;
+            border: none;
+            width: 100%;
+            text-align: left;
+        }
+
+        .export-menu-item:hover {
+            background: rgba(255, 255, 255, 0.08);
+        }
+
         .sidebar-btn {
             background: rgba(255, 255, 255, 0.05);
             border: 1px solid var(--border-color);
@@ -255,6 +305,7 @@
             align-items: center;
             gap: 8px;
             transition: background 0.2s;
+            width: 100%;
         }
 
         .sidebar-btn:hover {
@@ -326,6 +377,10 @@
             transform-origin: center center;
         }
 
+        .katex-mathml {
+            display: none !important;
+        }
+
         .canvas-element {
             position: absolute;
             user-select: none;
@@ -335,10 +390,6 @@
         .canvas-element.selected {
             outline: 2px solid var(--accent-color);
             outline-offset: 2px;
-        }
-
-        .canvas-element[contenteditable="true"] {
-            user-select: text;
         }
 
         .element-text {
@@ -428,88 +479,8 @@
             line-height: 1.5;
         }
 
-        @media print {
-            @page {
-                size: landscape;
-                margin: 0;
-            }
-
-            body {
-                background: white !important;
-                height: auto !important;
-                overflow: visible !important;
-                margin: 0 !important;
-            }
-
-            .view, .slides-sidebar, .workspace-container, .properties-sidebar, .editor-toolbar {
-                display: none !important;
-            }
-
-            .print-export-container {
-                display: block !important;
-            }
-
-            .print-slide {
-                width: var(--slide-width);
-                height: var(--slide-height);
-                aspect-ratio: 16 / 9;
-                background: #fff;
-                position: relative;
-                page-break-after: always !important;
-                break-after: page !important;
-                break-inside: avoid !important;
-                page-break-inside: avoid !important;
-                box-shadow: none;
-                overflow: hidden;
-                margin: 0 auto;
-            }
-        }
-
         .print-export-container {
             display: none;
-        }
-
-        .export-dropdown {
-            position: relative;
-            display: inline-block;
-            width: 100%;
-        }
-
-        .export-menu {
-            display: none;
-            position: absolute;
-            bottom: 100%;
-            left: 0;
-            right: 0;
-            margin-bottom: 4px;
-            background-color: var(--panel-bg);
-            border: 1px solid var(--border-color);
-            border-radius: 6px;
-            box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
-            z-index: 50;
-            overflow: hidden;
-        }
-
-        .export-menu.show {
-            display: block;
-        }
-
-        .export-menu-item {
-            padding: 10px 12px;
-            font-size: 12px;
-            color: var(--text-main);
-            cursor: pointer;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-            background: transparent;
-            border: none;
-            width: 100%;
-            text-align: left;
-        }
-
-        .export-menu-item:hover {
-            background: rgba(255, 255, 255, 0.08);
         }
     </style>
 </head>
@@ -524,7 +495,7 @@
             <p style="font-size: 12px; margin-bottom: 6px;">Open Existing Project:</p>
             <ul class="project-list" id="project-list">
                 <li class="project-item" onclick="openProject('Sample Presentation')">
-                    <span>Sample Presentation</span>
+                    <span>Sample Presentation with Math</span>
                     <span style="font-size: 11px;">3 slides</span>
                 </li>
             </ul>
@@ -549,7 +520,7 @@
                         <span>📄</span> Export as PDF
                     </button>
                 </div>
-                <button class="sidebar-btn" onclick="toggleExportMenu(event)" style="width: 100%;">
+                <button class="sidebar-btn" onclick="toggleExportMenu(event)">
                     <span>📥</span> Export Presentation... <span style="margin-left: auto;">▲</span>
                 </button>
             </div>
@@ -611,6 +582,17 @@
         target.style.display = 'flex';
     }
 
+    function toggleExportMenu(e) {
+        e.stopPropagation();
+        const menu = document.getElementById('export-menu');
+        menu.classList.toggle('show');
+    }
+
+    window.addEventListener('click', () => {
+        const menu = document.getElementById('export-menu');
+        if (menu) menu.classList.remove('show');
+    });
+
     function createNewProject() {
         slides = [
             {id: 1, title: "Title Slide", elements: []}
@@ -631,10 +613,10 @@
                         type: 'text',
                         x: 200,
                         y: 200,
-                        width: 600,
+                        width: 800,
                         height: 160,
-                        content: 'Welcome to Slide Studio',
-                        fontSize: 48,
+                        content: 'Welcome to Slide Studio with LaTeX: $E = mc^2$',
+                        fontSize: 42,
                         fontFamily: 'sans-serif',
                         fontColor: '#0f172a',
                         bg: 'transparent',
@@ -656,15 +638,15 @@
                 ]
             },
             {
-                id: 2, title: "Main Architecture", elements: [
+                id: 2, title: "Math Equations", elements: [
                     {
                         type: 'text',
                         x: 200,
                         y: 200,
-                        width: 900,
-                        height: 120,
-                        content: 'Core components structure',
-                        fontSize: 40,
+                        width: 1000,
+                        height: 200,
+                        content: 'Quadratic formula: $x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$',
+                        fontSize: 36,
                         fontFamily: 'sans-serif',
                         fontColor: '#0f172a',
                         bg: 'transparent',
@@ -734,9 +716,9 @@
             type: type,
             x: Math.round(200 + (currentSlide.elements.length * 30)),
             y: Math.round(200 + (currentSlide.elements.length * 30)),
-            width: type === 'text' ? Math.round(500 * scaleFactor) : Math.round(350 * scaleFactor),
-            height: type === 'text' ? Math.round(120 * scaleFactor) : Math.round(200 * scaleFactor),
-            content: type === 'text' ? 'Type your text here...' : '',
+            width: type === 'text' ? Math.round(600 * scaleFactor) : Math.round(350 * scaleFactor),
+            height: type === 'text' ? Math.round(150 * scaleFactor) : Math.round(200 * scaleFactor),
+            content: type === 'text' ? 'Type text or math like $x^2 + y^2 = r^2$' : '',
             bg: type === 'text' ? 'transparent' : '#cbd5e1',
             borderCol: type === 'text' ? 'transparent' : '#64748b',
             borderWidth: type === 'text' ? 0 : 2,
@@ -747,6 +729,29 @@
         };
         currentSlide.elements.push(newElement);
         selectedElementIndex = currentSlide.elements.length - 1;
+        renderEditor();
+    }
+
+    function renderKatexContent(element, rawText) {
+        element.innerHTML = rawText;
+        if (window.renderMathInElement) {
+            try {
+                renderMathInElement(element, {
+                    delimiters: [
+                        {left: "$$", right: "$$", display: true},
+                        {left: "$", right: "$", display: false},
+                        {left: "\\(", right: "\\)", display: false},
+                        {left: "\\[", right: "\\]", display: true}
+                    ],
+                    throwOnError: false
+                });
+            } catch (e) {
+                console.error("KaTeX rendering error:", e);
+            }
+        }
+    }
+
+    function renderAllMath() {
         renderEditor();
     }
 
@@ -783,10 +788,10 @@
                 thumbEl.style.borderStyle = el.borderStyle;
 
                 if (el.type === 'text') {
-                    thumbEl.innerText = el.content;
                     thumbEl.style.fontSize = `${el.fontSize}px`;
                     thumbEl.style.fontFamily = el.fontFamily;
                     thumbEl.style.color = el.fontColor;
+                    renderKatexContent(thumbEl, el.content);
                 }
                 scaler.appendChild(thumbEl);
             });
@@ -808,28 +813,6 @@
 
         renderCanvas();
         renderPropertiesPanel();
-        preparePrintContainer();
-    }
-
-    function preparePrintContainer() {
-        const printContainer = document.getElementById('print-export-container');
-        printContainer.innerHTML = '';
-        slides.forEach(s => {
-            const slideDiv = document.createElement('div');
-            slideDiv.className = 'print-slide';
-            let innerHTML = '';
-            s.elements.forEach(el => {
-                let style = `position: absolute; left:${el.x}px; top:${el.y}px; width:${el.width}px; height:${el.height}px; background-color:${el.bg}; border: ${el.borderWidth}px ${el.borderStyle} ${el.borderCol}; box-sizing: border-box;`;
-                if (el.type === 'text') {
-                    style += `font-size:${el.fontSize}px; font-family:${el.fontFamily}; color:${el.fontColor}; padding:8px; word-break: break-word;`;
-                    innerHTML += `<div style="${style}">${el.content}</div>`;
-                } else {
-                    innerHTML += `<div style="${style}"></div>`;
-                }
-            });
-            slideDiv.innerHTML = innerHTML;
-            printContainer.appendChild(slideDiv);
-        });
     }
 
     function renderCanvas() {
@@ -856,54 +839,29 @@
             domEl.style.borderStyle = el.borderStyle;
 
             if (el.type === 'text') {
-                domEl.contentEditable = "true";
-                domEl.innerText = el.content;
                 domEl.style.fontSize = `${el.fontSize}px`;
                 domEl.style.fontFamily = el.fontFamily;
                 domEl.style.color = el.fontColor;
+                domEl.contentEditable = "true";
+
+                if (selectedElementIndex === elIndex) {
+                    domEl.innerText = el.content;
+                } else {
+                    renderKatexContent(domEl, el.content);
+                }
 
                 domEl.oninput = (e) => {
                     el.content = e.target.innerText;
                     updateThumbnailLive();
-                    preparePrintContainer();
                 };
             }
-
-            domEl.onmousemove = (e) => {
-                const rect = domEl.getBoundingClientRect();
-                const scale = 0.5; // Matches canvas zoom scale
-                const x = (e.clientX - rect.left) / scale;
-                const y = (e.clientY - rect.top) / scale;
-                const threshold = 16;
-
-                const left = x < threshold;
-                const right = x > (el.width - threshold);
-                const top = y < threshold;
-                const bottom = y > (el.height - threshold);
-
-                if ((top && left) || (bottom && right)) {
-                    domEl.style.cursor = 'nwse-resize';
-                } else if ((top && right) || (bottom && left)) {
-                    domEl.style.cursor = 'nesw-resize';
-                } else if (left || right) {
-                    domEl.style.cursor = 'ew-resize';
-                } else if (top || bottom) {
-                    domEl.style.cursor = 'ns-resize';
-                } else {
-                    if (el.type === 'text') {
-                        domEl.style.cursor = 'text';
-                    } else {
-                        domEl.style.cursor = 'move';
-                    }
-                }
-            };
 
             domEl.onmousedown = (e) => {
                 const rect = domEl.getBoundingClientRect();
                 const scale = 0.5;
                 const x = (e.clientX - rect.left) / scale;
                 const y = (e.clientY - rect.top) / scale;
-                const threshold = 16;
+                const threshold = 12;
 
                 const isLeft = x < threshold;
                 const isRight = x > (el.width - threshold);
@@ -917,9 +875,7 @@
                     renderPropertiesPanel();
                 }
 
-                if (el.type === 'text' && !isResizing) {
-                    return;
-                }
+                const isCtrlMove = e.ctrlKey || e.metaKey;
 
                 const startX = e.clientX;
                 const startY = e.clientY;
@@ -927,12 +883,22 @@
                 const origY = el.y;
                 const origW = el.width;
                 const origH = el.height;
+                let hasDragged = false;
 
                 function onMouseMove(moveEvent) {
                     const dx = (moveEvent.clientX - startX) / scale;
                     const dy = (moveEvent.clientY - startY) / scale;
 
-                    if (isResizing) {
+                    if (Math.abs(dx) > 2 || Math.abs(dy) > 2) {
+                        hasDragged = true;
+                    }
+
+                    if (isCtrlMove && hasDragged) {
+                        el.x = origX + dx;
+                        el.y = origY + dy;
+                        domEl.style.left = `${el.x}px`;
+                        domEl.style.top = `${el.y}px`;
+                    } else if (isResizing) {
                         if (isRight) el.width = Math.max(50, origW + dx);
                         if (isBottom) el.height = Math.max(40, origH + dy);
                         if (isLeft) {
@@ -954,11 +920,6 @@
                         domEl.style.top = `${el.y}px`;
                         domEl.style.width = `${el.width}px`;
                         domEl.style.height = `${el.height}px`;
-                    } else {
-                        el.x = origX + dx;
-                        el.y = origY + dy;
-                        domEl.style.left = `${el.x}px`;
-                        domEl.style.top = `${el.y}px`;
                     }
 
                     const xInput = document.getElementById('prop-x');
@@ -972,13 +933,17 @@
                     window.removeEventListener('mousemove', onMouseMove);
                     window.removeEventListener('mouseup', onMouseUp);
                     renderPropertiesPanel();
-                    renderEditor();
-                    preparePrintContainer();
+                    if (hasDragged && isCtrlMove) {
+                        renderEditor();
+                    }
                 }
 
                 window.addEventListener('mousemove', onMouseMove);
                 window.addEventListener('mouseup', onMouseUp);
 
+                if (!isResizing && !isCtrlMove && el.type === 'text') {
+                    return;
+                }
                 e.stopPropagation();
             };
 
@@ -1006,10 +971,10 @@
             thumbEl.style.borderStyle = el.borderStyle;
 
             if (el.type === 'text') {
-                thumbEl.innerText = el.content;
                 thumbEl.style.fontSize = `${el.fontSize}px`;
                 thumbEl.style.fontFamily = el.fontFamily;
                 thumbEl.style.color = el.fontColor;
+                renderKatexContent(thumbEl, el.content);
             }
             scaler.appendChild(thumbEl);
         });
@@ -1128,128 +1093,146 @@
 
         renderCanvas();
         updateThumbnailLive();
-        preparePrintContainer();
     }
-
-    function toggleExportMenu(e) {
-        e.stopPropagation();
-        const menu = document.getElementById('export-menu');
-        menu.classList.toggle('show');
-    }
-
-    // Close dropdown when clicking outside
-    window.addEventListener('click', () => {
-        const menu = document.getElementById('export-menu');
-        if (menu) menu.classList.remove('show');
-    });
 
     async function triggerExport(type) {
         document.getElementById('export-menu').classList.remove('show');
 
-        let htmlContent = '';
-        let defaultFilename = '';
-
         if (type === 'pdf') {
-            defaultFilename = 'presentation.pdf';
-            // Define explicit custom landscape dimensions for xhtml2pdf to prevent page-overflow errors
-            htmlContent = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Presentation PDF</title><style>
-                    @page {
-                        size: ${slideWidth}pt ${slideHeight}pt;
-                        margin: 0;
-                    }
-                    body {
-                        background: white;
-                        margin: 0;
-                        font-family: sans-serif;
-                    }
-                    .print-slide {
-                        width: ${slideWidth}pt;
-                        height: ${slideHeight}pt;
-                        position: relative;
-                        page-break-after: always;
-                        break-after: page;
-                        overflow: hidden;
-                    }
-                    .el {
-                        position: absolute;
-                        box-sizing: border-box;
-                    }
-                </style></head><body>`;
+            const exportContainer = document.getElementById('print-export-container');
+            exportContainer.innerHTML = '';
+            exportContainer.style.display = 'block';
+            exportContainer.style.position = 'absolute';
+            exportContainer.style.left = '-9999px';
 
             slides.forEach((s) => {
-                htmlContent += `<div class="print-slide">`;
-                s.elements.forEach(el => {
-                    let style = `left:${el.x}pt; top:${el.y}pt; width:${el.width}pt; height:${el.height}pt; background-color:${el.bg}; border: ${el.borderWidth}pt ${el.borderStyle} ${el.borderCol};`;
-                    if (el.type === 'text') {
-                        style += `font-size:${el.fontSize}pt; font-family:${el.fontFamily}; color:${el.fontColor}; padding:8pt;`;
-                        htmlContent += `<div class="el" style="${style}">${el.content}</div>`;
-                    } else {
-                        htmlContent += `<div class="el" style="${style}"></div>`;
-                    }
-                });
-                htmlContent += `</div>`;
-            });
-            htmlContent += `</body></html>`;
-        } else {
-            defaultFilename = 'presentation.html';
-            htmlContent = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Presentation Viewer</title><style>
-                    body { background: #0f172a; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; overflow: hidden; }
-                    .slide-wrapper { width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; position: relative; }
-                    .slide { width: ${slideWidth}px; height: ${slideHeight}px; aspect-ratio: 16 / 9; background: #fff; position: absolute; box-shadow: 0 25px 50px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden; display: none; }
-                    .slide.active { display: block; }
-                    .el { position: absolute; box-sizing: border-box; }
-                    .nav-hint { position: fixed; bottom: 20px; color: #94a3b8; font-size: 14px; pointer-events: none; z-index: 1000; }
-                </style></head><body><div class="slide-wrapper">`;
+                const slideDiv = document.createElement('div');
+                slideDiv.className = 'print-slide';
+                slideDiv.style.width = `${slideWidth}px`;
+                slideDiv.style.height = `${slideHeight}px`;
+                slideDiv.style.position = 'relative';
+                slideDiv.style.background = '#ffffff';
+                slideDiv.style.overflow = 'hidden';
 
-            slides.forEach((s, idx) => {
-                htmlContent += `<div class="slide ${idx === 0 ? 'active' : ''}" id="slide-${idx}">`;
                 s.elements.forEach(el => {
-                    let style = `left:${el.x}px; top:${el.y}px; width:${el.width}px; height:${el.height}px; background-color:${el.bg}; border: ${el.borderWidth}px ${el.borderStyle} ${el.borderCol};`;
+                    let style = `position: absolute; left:${el.x}px; top:${el.y}px; width:${el.width}px; height:${el.height}px; background-color:${el.bg}; border: ${el.borderWidth}px ${el.borderStyle} ${el.borderCol}; box-sizing: border-box;`;
                     if (el.type === 'text') {
                         style += `font-size:${el.fontSize}px; font-family:${el.fontFamily}; color:${el.fontColor}; padding:8px;`;
-                        htmlContent += `<div class="el" style="${style}">${el.content}</div>`;
+                        const tempDiv = document.createElement('div');
+                        tempDiv.style.cssText = style;
+                        renderKatexContent(tempDiv, el.content);
+                        slideDiv.appendChild(tempDiv);
                     } else {
-                        htmlContent += `<div class="el" style="${style}"></div>`;
+                        const shapeDiv = document.createElement('div');
+                        shapeDiv.style.cssText = style;
+                        slideDiv.appendChild(shapeDiv);
                     }
                 });
-                htmlContent += `</div>`;
+                exportContainer.appendChild(slideDiv);
             });
 
-            htmlContent += `</div><div class="nav-hint">Use [Space] or [→] to go forward, [←] to go backward</div>`;
-            htmlContent += `<script>
-                    let current = 0;
-                    const total = ${slides.length};
-                    document.addEventListener('keydown', (e) => {
-                        if (e.code === 'Space' || e.code === 'ArrowRight') {
-                            if (current < total - 1) {
-                                document.getElementById('slide-' + current).classList.remove('active');
-                                current++;
-                                document.getElementById('slide-' + current).classList.add('active');
-                            }
-                        } else if (e.code === 'ArrowLeft') {
-                            if (current > 0) {
-                                document.getElementById('slide-' + current).classList.remove('active');
-                                current--;
-                                document.getElementById('slide-' + current).classList.add('active');
-                            }
-                        }
-                    });
-                <\/script></body></html>`;
+            try {
+                const slideElements = exportContainer.querySelectorAll('.print-slide');
+                const imageDataList = [];
+
+                for (let slideEl of slideElements) {
+                    const canvas = await html2canvas(slideEl, {scale: 2, useCORS: true, logging: false});
+                    imageDataList.push(canvas.toDataURL('image/jpeg', 0.95));
+                }
+
+                exportContainer.style.display = 'none';
+
+                if (window.pywebview && window.pywebview.api) {
+                    const res = await window.pywebview.api.save_pdf_from_images(imageDataList, "presentation.pdf");
+                    if (res.success) {
+                        alert(`Successfully exported presentation to: ${res.path}`);
+                    } else if (res.error !== "Cancelled") {
+                        alert(`Export failed: ${res.error}`);
+                    }
+                }
+            } catch (err) {
+                exportContainer.style.display = 'none';
+                alert(`PDF Export error: ${err.message}`);
+            }
+            return;
         }
+        // Fetch KaTeX CSS and embed it inline so the exported file is self-contained
+        let katexCss = '';
+        try {
+            const resp = await fetch('libs/katex.min.css');
+            katexCss = await resp.text();
+            // Rewrite relative font URLs to absolute CDN paths so fonts load too
+            katexCss = katexCss.replace(/url\((?!["']?(?:data:|https?:))/g,
+                'url(https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/');
+        } catch (e) {
+            console.warn('Could not load KaTeX CSS for export:', e);
+        }
+        // Interactive HTML Export
+        let htmlContent = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Presentation Viewer</title>
+            <style>${katexCss}</style>
+            <style>
+                body { background: #0f172a; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; overflow: hidden; }
+                .slide-wrapper { width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; position: relative; }
+                .slide { width: ${slideWidth}px; height: ${slideHeight}px; aspect-ratio: 16 / 9; background: #fff; position: absolute; box-shadow: 0 25px 50px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden; display: none; }
+                .slide.active { display: block; }
+                .el { position: absolute; box-sizing: border-box; }
+                .katex-mathml { display: none !important; }
+                .nav-hint { position: fixed; bottom: 20px; color: #94a3b8; font-size: 14px; pointer-events: none; z-index: 1000; }
+            </style></head><body><div class="slide-wrapper">`;
+
+        // Temporarily build slides and render math on screen or clone them to capture exact HTML
+        slides.forEach((s, idx) => {
+            htmlContent += `<div class="slide ${idx === 0 ? 'active' : ''}" id="slide-${idx}">`;
+            s.elements.forEach(el => {
+                let style = `left:${el.x}px; top:${el.y}px; width:${el.width}px; height:${el.height}px; background-color:${el.bg}; border: ${el.borderWidth}px ${el.borderStyle} ${el.borderCol};`;
+                if (el.type === 'text') {
+                    style += `font-size:${el.fontSize}px; font-family:${el.fontFamily}; color:${el.fontColor}; padding:8px;`;
+
+                    // Render into a temporary DOM element so KaTeX outputs its full HTML spans
+                    const tempDiv = document.createElement('div');
+                    renderKatexContent(tempDiv, el.content);
+                    htmlContent += `<div class="el" style="${style}">${tempDiv.innerHTML}</div>`;
+                } else {
+                    htmlContent += `<div class="el" style="${style}"></div>`;
+                }
+            });
+            htmlContent += `</div>`;
+        });
+
+        htmlContent += `</div><div class="nav-hint">Use [Space] or [→] to go forward, [←] to go backward</div>`;
+        htmlContent += `<script>
+                let current = 0;
+                const total = ${slides.length};
+                document.addEventListener('keydown', (e) => {
+                    if (e.code === 'Space' || e.code === 'ArrowRight') {
+                        if (current < total - 1) {
+                            document.getElementById('slide-' + current).classList.remove('active');
+                            current++;
+                            document.getElementById('slide-' + current).classList.add('active');
+                        }
+                    } else if (e.code === 'ArrowLeft') {
+                        if (current > 0) {
+                            document.getElementById('slide-' + current).classList.remove('active');
+                            current--;
+                            document.getElementById('slide-' + current).classList.add('active');
+                        }
+                    }
+                });
+            <\/script></body></html>`;
 
         if (window.pywebview && window.pywebview.api) {
-            const res = await window.pywebview.api.save_file(htmlContent, defaultFilename, type);
+            const res = await window.pywebview.api.save_file(htmlContent, "presentation.html", "html");
             if (res.success) {
                 alert(`Successfully exported presentation to: ${res.path}`);
             } else if (res.error !== "Cancelled") {
                 alert(`Export failed: ${res.error}`);
             }
         } else {
-            const blob = new Blob([htmlContent], {type: type === 'pdf' ? 'text/html' : 'text/html'});
+            const blob = new Blob([htmlContent], {type: 'text/html'});
             const url = URL.createObjectURL(blob);
             const a = document.createElement('a');
             a.href = url;
-            a.download = defaultFilename;
+            a.download = 'presentation.html';
             a.click();
             URL.revokeObjectURL(url);
         }

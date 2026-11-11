@@ -1,0 +1,16 @@
+dependencies:
+  - name: katex.min.css
+    url: "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css"
+    description: "KaTeX stylesheet for LaTeX math rendering"
+
+  - name: katex.min.js
+    url: "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"
+    description: "KaTeX JavaScript rendering engine"
+
+  - name: auto-render.min.js
+    url: "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"
+    description: "KaTeX auto-render extension"
+
+  - name: html2canvas.min.js
+    url: "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"
+    description: "html2canvas library for PDF slide export"
