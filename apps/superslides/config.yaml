@@ -1,0 +1,11 @@
+# apps/superslides/config.yaml
+name: "Superslides"
+description: "Local custom slides editor"
+module: "app"
+icon: "./icon.png"
+enabled: true
+category: "tools"
+type: "gui"
+version: "1.0"
+author: ""
+tags: ['tools', 'productivity']
