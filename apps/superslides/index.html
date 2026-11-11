@@ -100,6 +100,77 @@
             background-color: var(--accent-hover);
         }
 
+        .btn-secondary {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--border-color);
+            color: var(--text-main);
+        }
+
+        .btn-secondary:hover {
+            background: rgba(255, 255, 255, 0.1);
+            border-color: var(--accent-color);
+        }
+
+        .modal-backdrop {
+            display: none;
+            position: fixed;
+            inset: 0;
+            background: rgba(2, 6, 23, 0.7);
+            z-index: 200;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .modal-backdrop.show {
+            display: flex;
+        }
+
+        .modal {
+            background: var(--panel-bg);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 28px;
+            width: 420px;
+            box-shadow: 0 25px 50px rgba(0, 0, 0, 0.5);
+        }
+
+        .modal h2 {
+            font-size: 18px;
+            margin-bottom: 6px;
+        }
+
+        .modal p {
+            color: var(--text-muted);
+            font-size: 13px;
+            margin-bottom: 18px;
+        }
+
+        .modal-actions {
+            display: flex;
+            gap: 10px;
+            margin-top: 18px;
+        }
+
+        .modal-actions .btn {
+            width: auto;
+            flex: 1;
+            margin-bottom: 0;
+        }
+
+        .modal-folder-path {
+            color: var(--text-muted);
+            font-size: 12px;
+            margin-top: 6px;
+            word-break: break-all;
+        }
+
+        .modal-error {
+            color: #f87171;
+            font-size: 12px;
+            margin-top: 8px;
+            min-height: 14px;
+        }
+
         .existing-projects {
             margin-top: 20px;
             border-top: 1px solid var(--border-color);
@@ -155,6 +226,20 @@
         .sidebar-header h3 {
             font-size: 14px;
             font-weight: 600;
+        }
+
+        .save-indicator {
+            font-size: 10px;
+            color: var(--text-muted);
+            padding: 2px 6px;
+            border-radius: 4px;
+            background: rgba(255, 255, 255, 0.05);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .save-indicator.visible {
+            opacity: 1;
         }
 
         .slides-thumb-list {
@@ -352,6 +437,24 @@
             border-color: var(--accent-color);
         }
 
+        .project-title-input {
+            background: transparent;
+            border: 1px solid transparent;
+            color: var(--text-main);
+            font-size: 15px;
+            font-weight: 600;
+            padding: 6px 10px;
+            border-radius: 6px;
+            outline: none;
+            width: 260px;
+        }
+
+        .project-title-input:hover,
+        .project-title-input:focus {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: var(--border-color);
+        }
+
         .workspace {
             flex: 1;
             display: flex;
@@ -490,15 +593,35 @@
     <div class="welcome-card">
         <h1>Slide Studio</h1>
         <p>Local Markdown, LaTeX, and Freeform presentation builder.</p>
-        <button class="btn btn-primary" onclick="createNewProject()">+ Create New Project</button>
+        <button class="btn btn-primary" onclick="showNewProjectModal()">+ Create New Project</button>
+        <button class="btn btn-secondary" onclick="openProjectFromFile()">📂 Open Project File...</button>
         <div class="existing-projects">
-            <p style="font-size: 12px; margin-bottom: 6px;">Open Existing Project:</p>
-            <ul class="project-list" id="project-list">
-                <li class="project-item" onclick="openProject('Sample Presentation')">
-                    <span>Sample Presentation with Math</span>
-                    <span style="font-size: 11px;">3 slides</span>
-                </li>
-            </ul>
+            <p style="font-size: 12px; margin-bottom: 6px;">Recent Projects:</p>
+            <ul class="project-list" id="project-list"></ul>
+        </div>
+    </div>
+</div>
+
+<!-- New Project modal: name + folder picker -->
+<div class="modal-backdrop" id="new-project-modal">
+    <div class="modal">
+        <h2>Create New Project</h2>
+        <p>Choose a name and a location. A folder with that name will be created to hold the project and exports.</p>
+        <div class="prop-group">
+            <label>Project Name</label>
+            <input type="text" id="new-project-name" class="prop-control" placeholder="My Presentation"
+                   oninput="validateNewProjectForm()">
+        </div>
+        <div class="prop-group" style="margin-top: 14px;">
+            <label>Location</label>
+            <button class="sidebar-btn" onclick="chooseNewProjectFolder()">📁 Choose Folder...</button>
+            <div class="modal-folder-path" id="new-project-folder">No folder selected</div>
+        </div>
+        <div class="modal-error" id="new-project-error"></div>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="closeNewProjectModal()">Cancel</button>
+            <button class="btn btn-primary" id="new-project-create-btn" onclick="confirmCreateProject()" disabled>Create
+            </button>
         </div>
     </div>
 </div>
@@ -507,6 +630,7 @@
     <div class="slides-sidebar">
         <div class="sidebar-header">
             <h3>Project Slides</h3>
+            <span class="save-indicator" id="save-indicator">Saved ✓</span>
         </div>
         <div class="slides-thumb-list" id="slides-thumb-list"></div>
 
@@ -539,6 +663,8 @@
                 <span>⬛</span> Add Rectangle
             </button>
             <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
+                <input type="text" class="project-title-input" id="project-title-input"
+                       placeholder="Untitled Project" oninput="renameProject(this.value)">
                 <label style="font-size: 12px; color: var(--text-muted);">Slide Size:</label>
                 <select id="global-slide-size" class="prop-control" style="width: 200px;"
                         onchange="changeSlideSizePreset(this.value)">
@@ -572,6 +698,16 @@
     let slideWidth = 1920;
     let slideHeight = 1080;
 
+    // ---- Project state ----
+    let projectPath = null;      // absolute path of the .ssproj file
+    let projectFolder = null;    // absolute path of the project folder (exports start here)
+    let projectName = '';        // display name
+    let isDirty = false;         // unsaved changes since last autosave
+    let lastSnapshot = '';       // serialized state at last save, to detect real changes
+    let recents = [];            // [{name, path}]
+
+    const AUTOSAVE_INTERVAL_MS = 5000;
+
     function showView(viewId) {
         document.querySelectorAll('.view').forEach(v => {
             v.classList.remove('active');
@@ -593,17 +729,260 @@
         if (menu) menu.classList.remove('show');
     });
 
-    function createNewProject() {
-        slides = [
-            {id: 1, title: "Title Slide", elements: []}
-        ];
+    // ---------- Project persistence ----------
+
+    function serializeProject() {
+        return JSON.stringify({
+            version: 1,
+            name: projectName,
+            slideWidth: slideWidth,
+            slideHeight: slideHeight,
+            slides: slides
+        });
+    }
+
+    function deserializeProject(content) {
+        const data = JSON.parse(content);
+        if (!Array.isArray(data.slides)) throw new Error("Missing 'slides' array");
+        slides = data.slides;
+        slideWidth = data.slideWidth || 1920;
+        slideHeight = data.slideHeight || 1080;
+        projectName = data.name || 'Untitled Project';
+        syncSlideSizeSelect();
+        document.getElementById('project-title-input').value = projectName;
         currentSlideIndex = 0;
         selectedElementIndex = null;
+    }
+
+    function syncSlideSizeSelect() {
+        const sel = document.getElementById('global-slide-size');
+        const key = `${slideWidth}x${slideHeight}`;
+        sel.value = ['1920x1080', '960x540', '1280x960'].includes(key) ? key : 'custom';
+    }
+
+    function flashSaveIndicator(text) {
+        const el = document.getElementById('save-indicator');
+        el.textContent = text;
+        el.classList.add('visible');
+        clearTimeout(flashSaveIndicator._t);
+        flashSaveIndicator._t = setTimeout(() => el.classList.remove('visible'), 1600);
+    }
+
+    function markDirty() {
+        isDirty = true;
+    }
+
+    function currentSnapshot() {
+        // Snapshot ignores the project name (renaming saves immediately anyway)
+        return JSON.stringify({slideWidth, slideHeight, slides});
+    }
+
+    async function autoSaveTick() {
+        if (!projectPath || !isDirty) return;
+        const snap = currentSnapshot();
+        if (snap === lastSnapshot) {
+            isDirty = false;
+            return;
+        }
+        const res = await window.pywebview.api.save_project_data(projectPath, serializeProject());
+        if (res.success) {
+            lastSnapshot = snap;
+            isDirty = false;
+            flashSaveIndicator('Autosaved ✓');
+        } else {
+            console.error('Autosave failed:', res.error);
+        }
+    }
+
+    setInterval(autoSaveTick, AUTOSAVE_INTERVAL_MS);
+
+    // Flush pending changes when leaving the editor or closing the app
+    async function flushPendingSave() {
+        if (projectPath && isDirty && currentSnapshot() !== lastSnapshot) {
+            const res = await window.pywebview.api.save_project_data(projectPath, serializeProject());
+            if (res.success) {
+                lastSnapshot = currentSnapshot();
+                isDirty = false;
+            }
+        }
+    }
+
+    window.addEventListener('beforeunload', flushPendingSave);
+
+    async function renameProject(value) {
+        projectName = value.trim() || 'Untitled Project';
+        markDirty();
+        if (projectPath) {
+            // Save immediately (tiny payload; avoids waiting for the next tick)
+            const res = await window.pywebview.api.save_project_data(projectPath, serializeProject());
+            if (res.success) {
+                lastSnapshot = currentSnapshot();
+                isDirty = false;
+                flashSaveIndicator('Saved ✓');
+            }
+        }
+    }
+
+    // Recents list (session-scoped; could be persisted to a settings file later)
+    function addRecent(name, path) {
+        recents = recents.filter(r => r.path !== path);
+        recents.unshift({name, path});
+        recents = recents.slice(0, 5);
+        renderRecents();
+    }
+
+    function renderRecents() {
+        const ul = document.getElementById('project-list');
+        ul.innerHTML = '';
+        recents.forEach(r => {
+            const li = document.createElement('li');
+            li.className = 'project-item';
+            li.innerHTML = `<span>${r.name}</span>`;
+            li.onclick = () => openProjectByPath(r.path);
+            ul.appendChild(li);
+        });
+        if (recents.length === 0) {
+            ul.innerHTML = '<li class="project-item" style="cursor: default;">No projects opened yet</li>';
+        }
+    }
+
+    // ---------- New project modal ----------
+
+    let newProjectChosen = false;
+
+    function showNewProjectModal() {
+        document.getElementById('new-project-name').value = '';
+        newProjectChosen = false;
+        document.getElementById('new-project-folder').textContent = 'No folder selected';
+        document.getElementById('new-project-error').textContent = '';
+        document.getElementById('new-project-create-btn').disabled = true;
+        document.getElementById('new-project-modal').classList.add('show');
+        document.getElementById('new-project-name').focus();
+    }
+
+    function closeNewProjectModal() {
+        document.getElementById('new-project-modal').classList.remove('show');
+    }
+
+    function validateNewProjectForm() {
+        const name = document.getElementById('new-project-name').value.trim();
+        const err = document.getElementById('new-project-error');
+        err.textContent = '';
+        const btn = document.getElementById('new-project-create-btn');
+        if (name && newProjectChosen) {
+            btn.disabled = false;
+        } else {
+            btn.disabled = true;
+            if (name && !newProjectChosen) err.textContent = 'Pick a folder for the project.';
+        }
+    }
+
+    async function chooseNewProjectFolder() {
+        if (!(window.pywebview && window.pywebview.api)) {
+            document.getElementById('new-project-folder').textContent = '(dialog unavailable in browser preview)';
+            return;
+        }
+        const parent = await window.pywebview.api.select_folder();
+        if (parent && parent.success) {
+            newProjectChosen = true;
+            document.getElementById('new-project-folder').textContent = parent.path;
+            validateNewProjectForm();
+        }
+    }
+
+    async function confirmCreateProject() {
+        const name = document.getElementById('new-project-name').value.trim();
+        const err = document.getElementById('new-project-error');
+
+        if (!(window.pywebview && window.pywebview.api)) {
+            // Browser fallback: in-memory project, nothing on disk
+            startProject(name, null, null);
+            closeNewProjectModal();
+            return;
+        }
+
+        const res = await window.pywebview.api.create_project(name);
+        if (!res.success) {
+            err.textContent = res.error;
+            return;
+        }
+
+        projectPath = res.path;
+        projectFolder = res.folder;
+
+        // Write the initial project file
+        const saveRes = await window.pywebview.api.save_project_data(projectPath, serializeProject());
+        if (!saveRes.success) {
+            err.textContent = saveRes.error;
+            return;
+        }
+
+        startProject(name, projectPath, projectFolder);
+        closeNewProjectModal();
+    }
+
+    function startProject(name, path, folder) {
+        projectName = name || 'Untitled Project';
+        projectPath = path;
+        projectFolder = folder;
+
+        slides = [{id: 1, title: "Title Slide", elements: []}];
+        currentSlideIndex = 0;
+        selectedElementIndex = null;
+
+        document.getElementById('project-title-input').value = projectName;
+        if (path) addRecent(projectName, path);
+
+        lastSnapshot = currentSnapshot();
+        isDirty = false;
+
         showView('editor-view');
         renderEditor();
     }
 
-    function openProject(projectName) {
+    // ---------- Open project ----------
+
+    async function openProjectFromFile() {
+        if (!(window.pywebview && window.pywebview.api)) {
+            openSampleProject();
+            return;
+        }
+        const res = await window.pywebview.api.load_project();
+        if (!res.success) {
+            if (res.error !== 'Cancelled') alert(`Could not open project: ${res.error}`);
+            return;
+        }
+        openProjectByPath(res.path, res.content);
+    }
+
+    async function openProjectByPath(path, content) {
+        try {
+            if (!content) {
+                const res = await window.pywebview.api.load_project_at(path);
+                if (!res.success) {
+                    alert(`Could not open project: ${res.error}`);
+                    return;
+                }
+                content = res.content;
+            }
+            deserializeProject(content);
+            projectPath = path;
+            // Parent directory of the .ssproj file = project folder
+            projectFolder = path.replace(/[/\\][^/\\]+$/, '');
+            addRecent(projectName, path);
+            lastSnapshot = currentSnapshot();
+            isDirty = false;
+            showView('editor-view');
+            renderEditor();
+        } catch (e) {
+            alert(`Could not open project: ${e.message}`);
+        }
+    }
+
+    function openSampleProject() {
+        projectName = 'Sample Presentation';
+        projectPath = null;
+        projectFolder = null;
         slides = [
             {
                 id: 1,
@@ -660,19 +1039,24 @@
         ];
         currentSlideIndex = 0;
         selectedElementIndex = null;
+        document.getElementById('project-title-input').value = projectName;
         showView('editor-view');
         renderEditor();
     }
 
-    function goToHome() {
+    async function goToHome() {
+        await flushPendingSave();
         showView('welcome-view');
     }
+
+    // ---------- Editing primitives ----------
 
     function addSlide() {
         const newSlideId = slides.length + 1;
         slides.push({id: newSlideId, title: `Slide ${newSlideId}`, elements: []});
         currentSlideIndex = slides.length - 1;
         selectedElementIndex = null;
+        markDirty();
         renderEditor();
     }
 
@@ -698,9 +1082,12 @@
             if (w && h && !isNaN(w) && !isNaN(h)) {
                 slideWidth = parseInt(w);
                 slideHeight = parseInt(h);
+            } else {
+                syncSlideSizeSelect();
             }
         }
         updateDimensionsCSS();
+        markDirty();
         renderEditor();
     }
 
@@ -729,6 +1116,7 @@
         };
         currentSlide.elements.push(newElement);
         selectedElementIndex = currentSlide.elements.length - 1;
+        markDirty();
         renderEditor();
     }
 
@@ -755,6 +1143,15 @@
         renderEditor();
     }
 
+    // Debounced live-content sync: typing marks dirty without rebuilding the whole editor
+    let liveUpdateTimer = null;
+    function scheduleLiveUpdate(el, text) {
+        el.content = text;
+        markDirty();
+        clearTimeout(liveUpdateTimer);
+        liveUpdateTimer = setTimeout(updateThumbnailLive, 250);
+    }
+
     function renderEditor() {
         updateDimensionsCSS();
         const thumbList = document.getElementById('slides-thumb-list');
@@ -776,24 +1173,7 @@
             scaler.className = 'thumb-canvas-scaler';
 
             slide.elements.forEach(el => {
-                const thumbEl = document.createElement('div');
-                thumbEl.className = `thumb-element ${el.type === 'text' ? 'element-text' : 'element-shape'}`;
-                thumbEl.style.left = `${el.x}px`;
-                thumbEl.style.top = `${el.y}px`;
-                thumbEl.style.width = `${el.width}px`;
-                thumbEl.style.height = `${el.height}px`;
-                thumbEl.style.backgroundColor = el.bg;
-                thumbEl.style.borderColor = el.borderCol;
-                thumbEl.style.borderWidth = `${el.borderWidth}px`;
-                thumbEl.style.borderStyle = el.borderStyle;
-
-                if (el.type === 'text') {
-                    thumbEl.style.fontSize = `${el.fontSize}px`;
-                    thumbEl.style.fontFamily = el.fontFamily;
-                    thumbEl.style.color = el.fontColor;
-                    renderKatexContent(thumbEl, el.content);
-                }
-                scaler.appendChild(thumbEl);
+                scaler.appendChild(buildThumbElement(el));
             });
 
             thumb.appendChild(scaler);
@@ -813,6 +1193,27 @@
 
         renderCanvas();
         renderPropertiesPanel();
+    }
+
+    function buildThumbElement(el) {
+        const thumbEl = document.createElement('div');
+        thumbEl.className = `thumb-element ${el.type === 'text' ? 'element-text' : 'element-shape'}`;
+        thumbEl.style.left = `${el.x}px`;
+        thumbEl.style.top = `${el.y}px`;
+        thumbEl.style.width = `${el.width}px`;
+        thumbEl.style.height = `${el.height}px`;
+        thumbEl.style.backgroundColor = el.bg;
+        thumbEl.style.borderColor = el.borderCol;
+        thumbEl.style.borderWidth = `${el.borderWidth}px`;
+        thumbEl.style.borderStyle = el.borderStyle;
+
+        if (el.type === 'text') {
+            thumbEl.style.fontSize = `${el.fontSize}px`;
+            thumbEl.style.fontFamily = el.fontFamily;
+            thumbEl.style.color = el.fontColor;
+            renderKatexContent(thumbEl, el.content);
+        }
+        return thumbEl;
     }
 
     function renderCanvas() {
@@ -850,15 +1251,13 @@
                     renderKatexContent(domEl, el.content);
                 }
 
-                domEl.oninput = (e) => {
-                    el.content = e.target.innerText;
-                    updateThumbnailLive();
-                };
+                domEl.oninput = (e) => scheduleLiveUpdate(el, e.target.innerText);
             }
 
             domEl.onmousedown = (e) => {
                 const rect = domEl.getBoundingClientRect();
-                const scale = 0.5;
+                // Derive scale from actual rendered size — robust to future zoom changes
+                const scale = rect.width / (el.width || 1) || 0.5;
                 const x = (e.clientX - rect.left) / scale;
                 const y = (e.clientY - rect.top) / scale;
                 const threshold = 12;
@@ -873,6 +1272,7 @@
                     selectedElementIndex = elIndex;
                     renderCanvas();
                     renderPropertiesPanel();
+                    return;
                 }
 
                 const isCtrlMove = e.ctrlKey || e.metaKey;
@@ -926,12 +1326,12 @@
                     const yInput = document.getElementById('prop-y');
                     if (xInput) xInput.value = Math.round(el.x);
                     if (yInput) yInput.value = Math.round(el.y);
-                    updateThumbnailLive();
                 }
 
                 function onMouseUp() {
                     window.removeEventListener('mousemove', onMouseMove);
                     window.removeEventListener('mouseup', onMouseUp);
+                    if (hasDragged) markDirty();
                     renderPropertiesPanel();
                     if (hasDragged && isCtrlMove) {
                         renderEditor();
@@ -959,24 +1359,7 @@
 
         scaler.innerHTML = '';
         slides[currentSlideIndex].elements.forEach(el => {
-            const thumbEl = document.createElement('div');
-            thumbEl.className = `thumb-element ${el.type === 'text' ? 'element-text' : 'element-shape'}`;
-            thumbEl.style.left = `${el.x}px`;
-            thumbEl.style.top = `${el.y}px`;
-            thumbEl.style.width = `${el.width}px`;
-            thumbEl.style.height = `${el.height}px`;
-            thumbEl.style.backgroundColor = el.bg;
-            thumbEl.style.borderColor = el.borderCol;
-            thumbEl.style.borderWidth = `${el.borderWidth}px`;
-            thumbEl.style.borderStyle = el.borderStyle;
-
-            if (el.type === 'text') {
-                thumbEl.style.fontSize = `${el.fontSize}px`;
-                thumbEl.style.fontFamily = el.fontFamily;
-                thumbEl.style.color = el.fontColor;
-                renderKatexContent(thumbEl, el.content);
-            }
-            scaler.appendChild(thumbEl);
+            scaler.appendChild(buildThumbElement(el));
         });
     }
 
@@ -1091,12 +1474,16 @@
             el[propName] = value;
         }
 
+        markDirty();
         renderCanvas();
         updateThumbnailLive();
     }
 
     async function triggerExport(type) {
         document.getElementById('export-menu').classList.remove('show');
+        // Export dialogs start in the project folder when one exists
+        const exportStartDir = projectFolder || null;
+        const baseName = (projectName || 'presentation').replace(/\s+/g, '_');
 
         if (type === 'pdf') {
             const exportContainer = document.getElementById('print-export-container');
@@ -1143,7 +1530,7 @@
                 exportContainer.style.display = 'none';
 
                 if (window.pywebview && window.pywebview.api) {
-                    const res = await window.pywebview.api.save_pdf_from_images(imageDataList, "presentation.pdf");
+                    const res = await window.pywebview.api.save_pdf_from_images(imageDataList, `${baseName}.pdf`, exportStartDir);
                     if (res.success) {
                         alert(`Successfully exported presentation to: ${res.path}`);
                     } else if (res.error !== "Cancelled") {
@@ -1156,19 +1543,23 @@
             }
             return;
         }
-        // Fetch KaTeX CSS and embed it inline so the exported file is self-contained
+
+        // ---- Interactive HTML export ----
+
+        // Fetch KaTeX CSS and embed it inline so the exported file is self-contained.
+        // Relative font URLs are rewritten to absolute CDN paths so superscripts render
+        // correctly even when the exported file sits outside the app directory.
         let katexCss = '';
         try {
             const resp = await fetch('libs/katex.min.css');
             katexCss = await resp.text();
-            // Rewrite relative font URLs to absolute CDN paths so fonts load too
             katexCss = katexCss.replace(/url\((?!["']?(?:data:|https?:))/g,
                 'url(https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/');
         } catch (e) {
             console.warn('Could not load KaTeX CSS for export:', e);
         }
-        // Interactive HTML Export
-        let htmlContent = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>Presentation Viewer</title>
+
+        let htmlContent = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>${escapeHtml(projectName || 'Presentation')}</title>
             <style>${katexCss}</style>
             <style>
                 body { background: #0f172a; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; overflow: hidden; }
@@ -1180,7 +1571,6 @@
                 .nav-hint { position: fixed; bottom: 20px; color: #94a3b8; font-size: 14px; pointer-events: none; z-index: 1000; }
             </style></head><body><div class="slide-wrapper">`;
 
-        // Temporarily build slides and render math on screen or clone them to capture exact HTML
         slides.forEach((s, idx) => {
             htmlContent += `<div class="slide ${idx === 0 ? 'active' : ''}" id="slide-${idx}">`;
             s.elements.forEach(el => {
@@ -1221,7 +1611,7 @@
             <\/script></body></html>`;
 
         if (window.pywebview && window.pywebview.api) {
-            const res = await window.pywebview.api.save_file(htmlContent, "presentation.html", "html");
+            const res = await window.pywebview.api.save_file(htmlContent, `${baseName}.html`, "html", exportStartDir);
             if (res.success) {
                 alert(`Successfully exported presentation to: ${res.path}`);
             } else if (res.error !== "Cancelled") {
@@ -1237,6 +1627,12 @@
             URL.revokeObjectURL(url);
         }
     }
+
+    function escapeHtml(s) {
+        return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    }
+
+    renderRecents();
 </script>
 </body>
 </html>
