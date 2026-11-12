@@ -22,6 +22,13 @@
             --text-muted: #94a3b8;
             --slide-width: 1920px;
             --slide-height: 1080px;
+            --slide-bg: #ffffff;
+            --slide-text: #0f172a;
+        }
+
+        body.dark-mode {
+            --slide-bg: #1e293b;
+            --slide-text: #f8fafc;
         }
 
         * {
@@ -268,7 +275,7 @@
 
         .slide-thumb {
             aspect-ratio: 16 / 9;
-            background: #ffffff;
+            background: var(--slide-bg);
             border-radius: 6px;
             border: 2px solid transparent;
             position: relative;
@@ -296,7 +303,7 @@
             transform-origin: top left;
             transform: scale(0.12);
             pointer-events: none;
-            background: #ffffff;
+            background: var(--slide-bg);
         }
 
         .thumb-element {
@@ -446,7 +453,7 @@
             padding: 6px 10px;
             border-radius: 6px;
             outline: none;
-            width: 260px;
+            width: 220px;
         }
 
         .project-title-input:hover,
@@ -469,15 +476,16 @@
             width: var(--slide-width);
             height: var(--slide-height);
             aspect-ratio: 16 / 9;
-            background-color: #ffffff;
+            background-color: var(--slide-bg);
             border-radius: 4px;
             box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
             position: relative;
-            color: #0f172a;
+            color: var(--slide-text);
             overflow: hidden;
             flex-shrink: 0;
             transform: scale(0.5);
             transform-origin: center center;
+            transition: background-color 0.2s, color 0.2s;
         }
 
         .katex-mathml {
@@ -635,6 +643,10 @@
         <div class="slides-thumb-list" id="slides-thumb-list"></div>
 
         <div class="sidebar-footer">
+            <button class="toolbar-btn" id="theme-toggle-btn" onclick="toggleDarkMode()"
+                    style="width: 100%; justify-content: center;">
+                <span>🌙</span> Night Mode
+            </button>
             <div class="export-dropdown">
                 <div class="export-menu" id="export-menu">
                     <button class="export-menu-item" onclick="triggerExport('html')">
@@ -665,8 +677,17 @@
             <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
                 <input type="text" class="project-title-input" id="project-title-input"
                        placeholder="Untitled Project" oninput="renameProject(this.value)">
+                <label style="font-size: 12px; color: var(--text-muted);">Grid Size:</label>
+                <select id="grid-size-select" class="prop-control" style="width: 110px;"
+                        onchange="changeGridSize(this.value)">
+                    <option value="0">None</option>
+                    <option value="10">10px (Fine)</option>
+                    <option value="20" selected>20px (Normal)</option>
+                    <option value="40">40px (Coarse)</option>
+                    <option value="80">80px (Wide)</option>
+                </select>
                 <label style="font-size: 12px; color: var(--text-muted);">Slide Size:</label>
-                <select id="global-slide-size" class="prop-control" style="width: 200px;"
+                <select id="global-slide-size" class="prop-control" style="width: 140px;"
                         onchange="changeSlideSizePreset(this.value)">
                     <option value="1920x1080" selected>16:9 Full HD (1920x1080)</option>
                     <option value="960x540">16:9 Standard (960x540)</option>
@@ -697,14 +718,15 @@
     let selectedElementIndex = null;
     let slideWidth = 1920;
     let slideHeight = 1080;
+    let gridSize = 20;
+    let isDarkMode = false;
 
-    // ---- Project state ----
-    let projectPath = null;      // absolute path of the .ssproj file
-    let projectFolder = null;    // absolute path of the project folder (exports start here)
-    let projectName = '';        // display name
-    let isDirty = false;         // unsaved changes since last autosave
-    let lastSnapshot = '';       // serialized state at last save, to detect real changes
-    let recents = [];            // [{name, path}]
+    let projectPath = null;
+    let projectFolder = null;
+    let projectName = '';
+    let isDirty = false;
+    let lastSnapshot = '';
+    let recents = [];
 
     const AUTOSAVE_INTERVAL_MS = 5000;
 
@@ -718,6 +740,20 @@
         target.style.display = 'flex';
     }
 
+    function toggleDarkMode() {
+        isDarkMode = !isDarkMode;
+        document.body.classList.toggle('dark-mode', isDarkMode);
+        const btn = document.getElementById('theme-toggle-btn');
+        if (isDarkMode) {
+            btn.innerHTML = '<span>☀️</span> Day Mode';
+        } else {
+            btn.innerHTML = '<span>🌙</span> Night Mode';
+        }
+        markDirty();
+        renderCanvas();
+        updateThumbnailLive();
+    }
+
     function toggleExportMenu(e) {
         e.stopPropagation();
         const menu = document.getElementById('export-menu');
@@ -729,14 +765,14 @@
         if (menu) menu.classList.remove('show');
     });
 
-    // ---------- Project persistence ----------
-
     function serializeProject() {
         return JSON.stringify({
             version: 1,
             name: projectName,
             slideWidth: slideWidth,
             slideHeight: slideHeight,
+            gridSize: gridSize,
+            isDarkMode: isDarkMode,
             slides: slides
         });
     }
@@ -747,8 +783,16 @@
         slides = data.slides;
         slideWidth = data.slideWidth || 1920;
         slideHeight = data.slideHeight || 1080;
+        gridSize = data.gridSize !== undefined ? data.gridSize : 20;
+        isDarkMode = !!data.isDarkMode;
         projectName = data.name || 'Untitled Project';
+
+        document.body.classList.toggle('dark-mode', isDarkMode);
+        const btn = document.getElementById('theme-toggle-btn');
+        if (btn) btn.innerHTML = isDarkMode ? '<span>☀️</span> Day Mode' : '<span>🌙</span> Night Mode';
+
         syncSlideSizeSelect();
+        syncGridSizeSelect();
         document.getElementById('project-title-input').value = projectName;
         currentSlideIndex = 0;
         selectedElementIndex = null;
@@ -758,6 +802,17 @@
         const sel = document.getElementById('global-slide-size');
         const key = `${slideWidth}x${slideHeight}`;
         sel.value = ['1920x1080', '960x540', '1280x960'].includes(key) ? key : 'custom';
+    }
+
+    function syncGridSizeSelect() {
+        const sel = document.getElementById('grid-size-select');
+        if (sel) sel.value = gridSize;
+    }
+
+    function changeGridSize(val) {
+        gridSize = parseInt(val, 10);
+        markDirty();
+        renderCanvas();
     }
 
     function flashSaveIndicator(text) {
@@ -773,8 +828,7 @@
     }
 
     function currentSnapshot() {
-        // Snapshot ignores the project name (renaming saves immediately anyway)
-        return JSON.stringify({slideWidth, slideHeight, slides});
+        return JSON.stringify({slideWidth, slideHeight, gridSize, isDarkMode, slides});
     }
 
     async function autoSaveTick() {
@@ -796,7 +850,6 @@
 
     setInterval(autoSaveTick, AUTOSAVE_INTERVAL_MS);
 
-    // Flush pending changes when leaving the editor or closing the app
     async function flushPendingSave() {
         if (projectPath && isDirty && currentSnapshot() !== lastSnapshot) {
             const res = await window.pywebview.api.save_project_data(projectPath, serializeProject());
@@ -813,7 +866,6 @@
         projectName = value.trim() || 'Untitled Project';
         markDirty();
         if (projectPath) {
-            // Save immediately (tiny payload; avoids waiting for the next tick)
             const res = await window.pywebview.api.save_project_data(projectPath, serializeProject());
             if (res.success) {
                 lastSnapshot = currentSnapshot();
@@ -823,7 +875,6 @@
         }
     }
 
-    // Recents list (session-scoped; could be persisted to a settings file later)
     function addRecent(name, path) {
         recents = recents.filter(r => r.path !== path);
         recents.unshift({name, path});
@@ -845,8 +896,6 @@
             ul.innerHTML = '<li class="project-item" style="cursor: default;">No projects opened yet</li>';
         }
     }
-
-    // ---------- New project modal ----------
 
     let newProjectChosen = false;
 
@@ -895,7 +944,6 @@
         const err = document.getElementById('new-project-error');
 
         if (!(window.pywebview && window.pywebview.api)) {
-            // Browser fallback: in-memory project, nothing on disk
             startProject(name, null, null);
             closeNewProjectModal();
             return;
@@ -910,7 +958,6 @@
         projectPath = res.path;
         projectFolder = res.folder;
 
-        // Write the initial project file
         const saveRes = await window.pywebview.api.save_project_data(projectPath, serializeProject());
         if (!saveRes.success) {
             err.textContent = saveRes.error;
@@ -940,8 +987,6 @@
         renderEditor();
     }
 
-    // ---------- Open project ----------
-
     async function openProjectFromFile() {
         if (!(window.pywebview && window.pywebview.api)) {
             openSampleProject();
@@ -967,7 +1012,6 @@
             }
             deserializeProject(content);
             projectPath = path;
-            // Parent directory of the .ssproj file = project folder
             projectFolder = path.replace(/[/\\][^/\\]+$/, '');
             addRecent(projectName, path);
             lastSnapshot = currentSnapshot();
@@ -1002,40 +1046,9 @@
                         borderCol: 'transparent',
                         borderWidth: 0,
                         borderStyle: 'solid'
-                    },
-                    {
-                        type: 'shape',
-                        x: 200,
-                        y: 440,
-                        width: 500,
-                        height: 240,
-                        bg: '#3b82f6',
-                        borderCol: '#1e40af',
-                        borderWidth: 4,
-                        borderStyle: 'solid'
                     }
                 ]
-            },
-            {
-                id: 2, title: "Math Equations", elements: [
-                    {
-                        type: 'text',
-                        x: 200,
-                        y: 200,
-                        width: 1000,
-                        height: 200,
-                        content: 'Quadratic formula: $x = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}$',
-                        fontSize: 36,
-                        fontFamily: 'sans-serif',
-                        fontColor: '#0f172a',
-                        bg: 'transparent',
-                        borderCol: 'transparent',
-                        borderWidth: 0,
-                        borderStyle: 'solid'
-                    }
-                ]
-            },
-            {id: 3, title: "Conclusion", elements: []}
+            }
         ];
         currentSlideIndex = 0;
         selectedElementIndex = null;
@@ -1048,8 +1061,6 @@
         await flushPendingSave();
         showView('welcome-view');
     }
-
-    // ---------- Editing primitives ----------
 
     function addSlide() {
         const newSlideId = slides.length + 1;
@@ -1106,13 +1117,13 @@
             width: type === 'text' ? Math.round(600 * scaleFactor) : Math.round(350 * scaleFactor),
             height: type === 'text' ? Math.round(150 * scaleFactor) : Math.round(200 * scaleFactor),
             content: type === 'text' ? 'Type text or math like $x^2 + y^2 = r^2$' : '',
-            bg: type === 'text' ? 'transparent' : '#cbd5e1',
-            borderCol: type === 'text' ? 'transparent' : '#64748b',
+            bg: type === 'text' ? 'transparent' : (isDarkMode ? '#334155' : '#cbd5e1'),
+            borderCol: type === 'text' ? 'transparent' : (isDarkMode ? '#64748b' : '#475569'),
             borderWidth: type === 'text' ? 0 : 2,
             borderStyle: 'solid',
             fontSize: Math.round(32 * scaleFactor),
             fontFamily: 'sans-serif',
-            fontColor: '#0f172a'
+            fontColor: isDarkMode ? '#f8fafc' : '#0f172a'
         };
         currentSlide.elements.push(newElement);
         selectedElementIndex = currentSlide.elements.length - 1;
@@ -1143,8 +1154,8 @@
         renderEditor();
     }
 
-    // Debounced live-content sync: typing marks dirty without rebuilding the whole editor
     let liveUpdateTimer = null;
+
     function scheduleLiveUpdate(el, text) {
         el.content = text;
         markDirty();
@@ -1154,6 +1165,7 @@
 
     function renderEditor() {
         updateDimensionsCSS();
+        syncGridSizeSelect();
         const thumbList = document.getElementById('slides-thumb-list');
         thumbList.innerHTML = '';
 
@@ -1186,9 +1198,9 @@
         addThumb.className = 'slide-thumb-add';
         addThumb.onclick = () => addSlide();
         addThumb.innerHTML = `
-                <span style="font-size: 16px; font-weight: bold;">+</span>
-                <span>Add Slide</span>
-            `;
+            <span style="font-size: 16px; font-weight: bold;">+</span>
+            <span>Add Slide</span>
+        `;
         thumbList.appendChild(addThumb);
 
         renderCanvas();
@@ -1216,9 +1228,46 @@
         return thumbEl;
     }
 
+    function getGridSvgDataUri(width, height, gridSize, isDarkMode) {
+        if (!gridSize || gridSize <= 0) return 'none';
+        const cols = Math.max(1, Math.round(width / gridSize));
+        const rows = Math.max(1, Math.round(height / gridSize));
+        const stepX = width / cols;
+        const stepY = height / rows;
+        const dotRadius = Math.max(1.5, Math.min(4, Math.min(stepX, stepY) * 0.08));
+        const dotColor = isDarkMode ? '#94a3b8' : '#64748b';
+
+        let svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}">`;
+        for (let x = 0; x <= width + 0.1; x += stepX) {
+            for (let y = 0; y <= height + 0.1; y += stepY) {
+                svg += `<circle cx="${x}" cy="${y}" r="${dotRadius}" fill="${dotColor}"/>`;
+            }
+        }
+        svg += `</svg>`;
+        return `url("data:image/svg+xml;utf8,${encodeURIComponent(svg)}")`;
+    }
+
     function renderCanvas() {
         const canvas = document.getElementById('slide-canvas');
         canvas.innerHTML = '';
+
+        let stepX = gridSize;
+        let stepY = gridSize;
+
+        if (gridSize > 0) {
+            const cols = Math.max(1, Math.round(slideWidth / gridSize));
+            const rows = Math.max(1, Math.round(slideHeight / gridSize));
+            stepX = slideWidth / cols;
+            stepY = slideHeight / rows;
+
+            canvas.style.backgroundImage = getGridSvgDataUri(slideWidth, slideHeight, gridSize, isDarkMode);
+            canvas.style.backgroundSize = '100% 100%';
+            canvas.style.backgroundPosition = '0px 0px';
+            canvas.style.width = `${slideWidth}px`;
+            canvas.style.height = `${slideHeight}px`;
+        } else {
+            canvas.style.backgroundImage = 'none';
+        }
 
         const currentSlide = slides[currentSlideIndex];
         if (!currentSlide) return;
@@ -1254,9 +1303,39 @@
                 domEl.oninput = (e) => scheduleLiveUpdate(el, e.target.innerText);
             }
 
+            domEl.onmousemove = (e) => {
+                const rect = domEl.getBoundingClientRect();
+                const scale = rect.width / (el.width || 1) || 0.5;
+                const localX = (e.clientX - rect.left) / scale;
+                const localY = (e.clientY - rect.top) / scale;
+                const threshold = 12;
+
+                const isLeft = localX < threshold;
+                const isRight = localX > (el.width - threshold);
+                const isTop = localY < threshold;
+                const isBottom = localY > (el.height - threshold);
+
+                if (isTop && isLeft) {
+                    domEl.style.cursor = 'nwse-resize';
+                } else if (isTop && isRight) {
+                    domEl.style.cursor = 'nesw-resize';
+                } else if (isBottom && isLeft) {
+                    domEl.style.cursor = 'nesw-resize';
+                } else if (isBottom && isRight) {
+                    domEl.style.cursor = 'nwse-resize';
+                } else if (isLeft || isRight) {
+                    domEl.style.cursor = 'ew-resize';
+                } else if (isTop || isBottom) {
+                    domEl.style.cursor = 'ns-resize';
+                } else if (e.ctrlKey || e.metaKey) {
+                    domEl.style.cursor = 'grab';
+                } else {
+                    domEl.style.cursor = '';
+                }
+            };
+
             domEl.onmousedown = (e) => {
                 const rect = domEl.getBoundingClientRect();
-                // Derive scale from actual rendered size — robust to future zoom changes
                 const scale = rect.width / (el.width || 1) || 0.5;
                 const x = (e.clientX - rect.left) / scale;
                 const y = (e.clientY - rect.top) / scale;
@@ -1285,6 +1364,11 @@
                 const origH = el.height;
                 let hasDragged = false;
 
+                function snapToGridPoint(val, step) {
+                    if (!gridSize || gridSize <= 0) return val;
+                    return Math.round(val / step) * step;
+                }
+
                 function onMouseMove(moveEvent) {
                     const dx = (moveEvent.clientX - startX) / scale;
                     const dy = (moveEvent.clientY - startY) / scale;
@@ -1293,27 +1377,52 @@
                         hasDragged = true;
                     }
 
+                    const useFreeform = moveEvent.altKey;
+
                     if (isCtrlMove && hasDragged) {
-                        el.x = origX + dx;
-                        el.y = origY + dy;
+                        if (useFreeform) {
+                            el.x = origX + dx;
+                            el.y = origY + dy;
+                        } else {
+                            el.x = snapToGridPoint(origX + dx, stepX);
+                            el.y = snapToGridPoint(origY + dy, stepY);
+                        }
                         domEl.style.left = `${el.x}px`;
                         domEl.style.top = `${el.y}px`;
+                        domEl.style.cursor = 'grabbing';
                     } else if (isResizing) {
-                        if (isRight) el.width = Math.max(50, origW + dx);
-                        if (isBottom) el.height = Math.max(40, origH + dy);
+                        let newW = origW + dx;
+                        let newH = origH + dy;
+                        let newX = origX;
+                        let newY = origY;
+
+                        if (isRight) newW = Math.max(50, origW + dx);
+                        if (isBottom) newH = Math.max(40, origH + dy);
                         if (isLeft) {
-                            const newW = origW - dx;
-                            if (newW > 50) {
-                                el.width = newW;
-                                el.x = origX + dx;
+                            const candidateW = origW - dx;
+                            if (candidateW > 50) {
+                                newW = candidateW;
+                                newX = origX + dx;
                             }
                         }
                         if (isTop) {
-                            const newH = origH - dy;
-                            if (newH > 40) {
-                                el.height = newH;
-                                el.y = origY + dy;
+                            const candidateH = origH - dy;
+                            if (candidateH > 40) {
+                                newH = candidateH;
+                                newY = origY + dy;
                             }
+                        }
+
+                        if (!useFreeform) {
+                            el.x = snapToGridPoint(newX, stepX);
+                            el.y = snapToGridPoint(newY, stepY);
+                            el.width = snapToGridPoint(newW, stepX);
+                            el.height = snapToGridPoint(newH, stepY);
+                        } else {
+                            el.x = newX;
+                            el.y = newY;
+                            el.width = newW;
+                            el.height = newH;
                         }
 
                         domEl.style.left = `${el.x}px`;
@@ -1331,6 +1440,7 @@
                 function onMouseUp() {
                     window.removeEventListener('mousemove', onMouseMove);
                     window.removeEventListener('mouseup', onMouseUp);
+                    domEl.style.cursor = '';
                     if (hasDragged) markDirty();
                     renderPropertiesPanel();
                     if (hasDragged && isCtrlMove) {
@@ -1383,82 +1493,82 @@
         const el = currentSlide.elements[selectedElementIndex];
 
         let html = `
+            <div class="prop-group">
+                <label>Object Type</label>
+                <input type="text" class="prop-control" value="${el.type === 'text' ? 'Text Box' : 'Rectangle Shape'}" disabled style="opacity: 0.6;">
+            </div>
+            <div class="prop-row">
                 <div class="prop-group">
-                    <label>Object Type</label>
-                    <input type="text" class="prop-control" value="${el.type === 'text' ? 'Text Box' : 'Rectangle Shape'}" disabled style="opacity: 0.6;">
+                    <label>X Position</label>
+                    <input type="number" id="prop-x" class="prop-control" value="${Math.round(el.x)}" oninput="updateProp('x', this.value)">
                 </div>
-                <div class="prop-row">
-                    <div class="prop-group">
-                        <label>X Position</label>
-                        <input type="number" id="prop-x" class="prop-control" value="${Math.round(el.x)}" oninput="updateProp('x', this.value)">
-                    </div>
-                    <div class="prop-group">
-                        <label>Y Position</label>
-                        <input type="number" id="prop-y" class="prop-control" value="${Math.round(el.y)}" oninput="updateProp('y', this.value)">
-                    </div>
+                <div class="prop-group">
+                    <label>Y Position</label>
+                    <input type="number" id="prop-y" class="prop-control" value="${Math.round(el.y)}" oninput="updateProp('y', this.value)">
                 </div>
-                <div class="prop-row">
-                    <div class="prop-group">
-                        <label>Width</label>
-                        <input type="number" class="prop-control" value="${Math.round(el.width)}" oninput="updateProp('width', this.value)">
-                    </div>
-                    <div class="prop-group">
-                        <label>Height</label>
-                        <input type="number" class="prop-control" value="${Math.round(el.height)}" oninput="updateProp('height', this.value)">
-                    </div>
+            </div>
+            <div class="prop-row">
+                <div class="prop-group">
+                    <label>Width</label>
+                    <input type="number" class="prop-control" value="${Math.round(el.width)}" oninput="updateProp('width', this.value)">
                 </div>
-            `;
+                <div class="prop-group">
+                    <label>Height</label>
+                    <input type="number" class="prop-control" value="${Math.round(el.height)}" oninput="updateProp('height', this.value)">
+                </div>
+            </div>
+        `;
 
         if (el.type === 'text') {
             html += `
-                    <div style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 4px;"></div>
-                    <div class="prop-group">
-                        <label>Font Family</label>
-                        <select class="prop-control" onchange="updateProp('fontFamily', this.value)">
-                            <option value="sans-serif" ${el.fontFamily === 'sans-serif' ? 'selected' : ''}>Sans-Serif</option>
-                            <option value="serif" ${el.fontFamily === 'serif' ? 'selected' : ''}>Serif</option>
-                            <option value="monospace" ${el.fontFamily === 'monospace' ? 'selected' : ''}>Monospace</option>
-                        </select>
-                    </div>
-                    <div class="prop-row">
-                        <div class="prop-group">
-                            <label>Font Size (px)</label>
-                            <input type="number" class="prop-control" value="${el.fontSize}" oninput="updateProp('fontSize', this.value)">
-                        </div>
-                        <div class="prop-group">
-                            <label>Text Color</label>
-                            <input type="color" class="prop-control" value="${el.fontColor}" style="height: 34px; padding: 2px;" oninput="updateProp('fontColor', this.value)">
-                        </div>
-                    </div>
-                `;
-        }
-
-        html += `
                 <div style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 4px;"></div>
                 <div class="prop-group">
-                    <label>Background Color</label>
-                    <input type="color" class="prop-control" value="${el.bg === 'transparent' ? '#ffffff' : el.bg}" style="height: 34px; padding: 2px;" oninput="updateProp('bg', this.value)">
+                    <label>Font Family</label>
+                    <select class="prop-control" onchange="updateProp('fontFamily', this.value)">
+                        <option value="sans-serif" ${el.fontFamily === 'sans-serif' ? 'selected' : ''}>Sans-Serif</option>
+                        <option value="serif" ${el.fontFamily === 'serif' ? 'selected' : ''}>Serif</option>
+                        <option value="monospace" ${el.fontFamily === 'monospace' ? 'selected' : ''}>Monospace</option>
+                    </select>
                 </div>
                 <div class="prop-row">
                     <div class="prop-group">
-                        <label>Border Color</label>
-                        <input type="color" class="prop-control" value="${el.borderCol === 'transparent' ? '#000000' : el.borderCol}" style="height: 34px; padding: 2px;" oninput="updateProp('borderCol', this.value)">
+                        <label>Font Size (px)</label>
+                        <input type="number" class="prop-control" value="${el.fontSize}" oninput="updateProp('fontSize', this.value)">
                     </div>
                     <div class="prop-group">
-                        <label>Border Width (px)</label>
-                        <input type="number" class="prop-control" min="0" max="20" value="${el.borderWidth}" oninput="updateProp('borderWidth', this.value)">
+                        <label>Text Color</label>
+                        <input type="color" class="prop-control" value="${el.fontColor}" style="height: 34px; padding: 2px;" oninput="updateProp('fontColor', this.value)">
                     </div>
                 </div>
-                <div class="prop-group">
-                    <label>Border Style</label>
-                    <select class="prop-control" onchange="updateProp('borderStyle', this.value)">
-                        <option value="solid" ${el.borderStyle === 'solid' ? 'selected' : ''}>Solid</option>
-                        <option value="dashed" ${el.borderStyle === 'dashed' ? 'selected' : ''}>Dashed</option>
-                        <option value="dotted" ${el.borderStyle === 'dotted' ? 'selected' : ''}>Dotted</option>
-                        <option value="none" ${el.borderStyle === 'none' ? 'selected' : ''}>None</option>
-                    </select>
-                </div>
             `;
+        }
+
+        html += `
+            <div style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 4px;"></div>
+            <div class="prop-group">
+                <label>Background Color</label>
+                <input type="color" class="prop-control" value="${el.bg === 'transparent' ? '#ffffff' : el.bg}" style="height: 34px; padding: 2px;" oninput="updateProp('bg', this.value)">
+            </div>
+            <div class="prop-row">
+                <div class="prop-group">
+                    <label>Border Color</label>
+                    <input type="color" class="prop-control" value="${el.borderCol === 'transparent' ? '#000000' : el.borderCol}" style="height: 34px; padding: 2px;" oninput="updateProp('borderCol', this.value)">
+                </div>
+                <div class="prop-group">
+                    <label>Border Width (px)</label>
+                    <input type="number" class="prop-control" min="0" max="20" value="${el.borderWidth}" oninput="updateProp('borderWidth', this.value)">
+                </div>
+            </div>
+            <div class="prop-group">
+                <label>Border Style</label>
+                <select class="prop-control" onchange="updateProp('borderStyle', this.value)">
+                    <option value="solid" ${el.borderStyle === 'solid' ? 'selected' : ''}>Solid</option>
+                    <option value="dashed" ${el.borderStyle === 'dashed' ? 'selected' : ''}>Dashed</option>
+                    <option value="dotted" ${el.borderStyle === 'dotted' ? 'selected' : ''}>Dotted</option>
+                    <option value="none" ${el.borderStyle === 'none' ? 'selected' : ''}>None</option>
+                </select>
+            </div>
+        `;
 
         panelBody.innerHTML = html;
     }
@@ -1481,9 +1591,9 @@
 
     async function triggerExport(type) {
         document.getElementById('export-menu').classList.remove('show');
-        // Export dialogs start in the project folder when one exists
         const exportStartDir = projectFolder || null;
         const baseName = (projectName || 'presentation').replace(/\s+/g, '_');
+        const activeSlideBg = isDarkMode ? '#1e293b' : '#ffffff';
 
         if (type === 'pdf') {
             const exportContainer = document.getElementById('print-export-container');
@@ -1498,7 +1608,7 @@
                 slideDiv.style.width = `${slideWidth}px`;
                 slideDiv.style.height = `${slideHeight}px`;
                 slideDiv.style.position = 'relative';
-                slideDiv.style.background = '#ffffff';
+                slideDiv.style.background = activeSlideBg;
                 slideDiv.style.overflow = 'hidden';
 
                 s.elements.forEach(el => {
@@ -1544,11 +1654,6 @@
             return;
         }
 
-        // ---- Interactive HTML export ----
-
-        // Fetch KaTeX CSS and embed it inline so the exported file is self-contained.
-        // Relative font URLs are rewritten to absolute CDN paths so superscripts render
-        // correctly even when the exported file sits outside the app directory.
         let katexCss = '';
         try {
             const resp = await fetch('libs/katex.min.css');
@@ -1564,7 +1669,7 @@
             <style>
                 body { background: #0f172a; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; overflow: hidden; }
                 .slide-wrapper { width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; position: relative; }
-                .slide { width: ${slideWidth}px; height: ${slideHeight}px; aspect-ratio: 16 / 9; background: #fff; position: absolute; box-shadow: 0 25px 50px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden; display: none; }
+                .slide { width: ${slideWidth}px; height: ${slideHeight}px; aspect-ratio: 16 / 9; background: ${activeSlideBg}; position: absolute; box-shadow: 0 25px 50px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden; display: none; }
                 .slide.active { display: block; }
                 .el { position: absolute; box-sizing: border-box; }
                 .katex-mathml { display: none !important; }
@@ -1577,8 +1682,6 @@
                 let style = `left:${el.x}px; top:${el.y}px; width:${el.width}px; height:${el.height}px; background-color:${el.bg}; border: ${el.borderWidth}px ${el.borderStyle} ${el.borderCol};`;
                 if (el.type === 'text') {
                     style += `font-size:${el.fontSize}px; font-family:${el.fontFamily}; color:${el.fontColor}; padding:8px;`;
-
-                    // Render into a temporary DOM element so KaTeX outputs its full HTML spans
                     const tempDiv = document.createElement('div');
                     renderKatexContent(tempDiv, el.content);
                     htmlContent += `<div class="el" style="${style}">${tempDiv.innerHTML}</div>`;
