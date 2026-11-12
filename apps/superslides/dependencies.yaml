@@ -14,3 +14,21 @@ dependencies:
   - name: html2canvas.min.js
     url: "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"
     description: "html2canvas library for PDF slide export"
+
+fonts:
+  - name: "KaTeX_AMS-Regular.woff2"
+    url: "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/fonts/KaTeX_AMS-Regular.woff2"
+  - name: "KaTeX_Main-Regular.woff2"
+    url: "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/fonts/KaTeX_Main-Regular.woff2"
+  - name: "KaTeX_Math-Italic.woff2"
+    url: "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/fonts/KaTeX_Math-Italic.woff2"
+  - name: "KaTeX_Size1-Regular.woff2"
+    url: "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/fonts/KaTeX_Size1-Regular.woff2"
+  - name: "KaTeX_Size2-Regular.woff2"
+    url: "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/fonts/KaTeX_Size2-Regular.woff2"
+  - name: "KaTeX_Size3-Regular.woff2"
+    url: "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/fonts/KaTeX_Size3-Regular.woff2"
+  - name: "KaTeX_Size4-Regular.woff2"
+    url: "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/fonts/KaTeX_Size4-Regular.woff2"
+  - name: "KaTeX_Caligraphic-Regular.woff2"
+    url: "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/fonts/KaTeX_Caligraphic-Regular.woff2"

@@ -634,6 +634,23 @@
     </div>
 </div>
 
+<!-- Macros modal -->
+<div class="modal-backdrop" id="macros-modal">
+    <div class="modal" style="width: 500px;">
+        <h2>LaTeX Macros</h2>
+        <p>Define macros using standard LaTeX syntax. Packages like <code>\usepackage{amssymb}</code> are safely handled.</p>
+        <div class="prop-group">
+            <label>Macros Definition (.tex)</label>
+            <textarea id="macros-textarea" class="prop-control" rows="10" placeholder='\usepackage{amssymb}&#10;\newcommand{\R}{\mathbb{R}}&#10;\newcommand{\eps}{\varepsilon}' style="font-family: monospace; resize: vertical;"></textarea>
+        </div>
+        <div class="modal-error" id="macros-error"></div>
+        <div class="modal-actions">
+            <button class="btn btn-secondary" onclick="closeMacrosModal()">Cancel</button>
+            <button class="btn btn-primary" onclick="saveMacros()">Save & Apply</button>
+        </div>
+    </div>
+</div>
+
 <div id="editor-view" class="view">
     <div class="slides-sidebar">
         <div class="sidebar-header">
@@ -646,6 +663,9 @@
             <button class="toolbar-btn" id="theme-toggle-btn" onclick="toggleDarkMode()"
                     style="width: 100%; justify-content: center;">
                 <span>🌙</span> Night Mode
+            </button>
+            <button class="sidebar-btn" onclick="openMacrosModal()">
+                <span>⚙️</span> Edit LaTeX Macros...
             </button>
             <div class="export-dropdown">
                 <div class="export-menu" id="export-menu">
@@ -721,6 +741,14 @@
     let gridSize = 20;
     let isDarkMode = false;
 
+    let rawTexMacros = `\\usepackage{amssymb}
+\\usepackage{amsfonts}
+\\newcommand{\\R}{\\mathbb{R}}
+\\newcommand{\\N}{\\mathbb{N}}
+\\newcommand{\\eps}{\\varepsilon}
+\\newcommand{\\vec}[1]{\\mathbf{#1}}`;
+    let projectMacros = parseTexMacros(rawTexMacros);
+
     let projectPath = null;
     let projectFolder = null;
     let projectName = '';
@@ -729,6 +757,57 @@
     let recents = [];
 
     const AUTOSAVE_INTERVAL_MS = 5000;
+
+    function parseTexMacros(texText) {
+        const macros = {};
+        const lines = texText.split('\n');
+
+        for (let line of lines) {
+            line = line.trim();
+            // Skip comments, empty lines, and package imports gracefully
+            if (!line || line.startsWith('%') || line.startsWith('\\usepackage')) continue;
+
+            const ncMatch = line.match(/\\newcommand\{\s*(\\[a-zA-Z]+)\s*\}(?:\[(\d+)\])?\s*\{([\s\S]*)\}/);
+            if (ncMatch) {
+                let [, cmd, numArgs, expansion] = ncMatch;
+                macros[cmd] = expansion.trim();
+                continue;
+            }
+
+            const defMatch = line.match(/\\def\s*(\\[a-zA-Z]+)\s*\{([\s\S]*)\}/);
+            if (defMatch) {
+                let [, cmd, expansion] = defMatch;
+                macros[cmd] = expansion.trim();
+                continue;
+            }
+        }
+        return macros;
+    }
+
+    function openMacrosModal() {
+        const textarea = document.getElementById('macros-textarea');
+        textarea.value = rawTexMacros;
+        document.getElementById('macros-error').textContent = '';
+        document.getElementById('macros-modal').classList.add('show');
+    }
+
+    function closeMacrosModal() {
+        document.getElementById('macros-modal').classList.remove('show');
+    }
+
+    function saveMacros() {
+        const textarea = document.getElementById('macros-textarea');
+        const errEl = document.getElementById('macros-error');
+        try {
+            rawTexMacros = textarea.value;
+            projectMacros = parseTexMacros(rawTexMacros);
+            markDirty();
+            closeMacrosModal();
+            renderEditor();
+        } catch (e) {
+            errEl.textContent = `Parsing error: ${e.message}`;
+        }
+    }
 
     function showView(viewId) {
         document.querySelectorAll('.view').forEach(v => {
@@ -773,6 +852,7 @@
             slideHeight: slideHeight,
             gridSize: gridSize,
             isDarkMode: isDarkMode,
+            rawTexMacros: rawTexMacros,
             slides: slides
         });
     }
@@ -786,6 +866,8 @@
         gridSize = data.gridSize !== undefined ? data.gridSize : 20;
         isDarkMode = !!data.isDarkMode;
         projectName = data.name || 'Untitled Project';
+        rawTexMacros = data.rawTexMacros || '\\newcommand{\\R}{\\mathbb{R}}';
+        projectMacros = parseTexMacros(rawTexMacros);
 
         document.body.classList.toggle('dark-mode', isDarkMode);
         const btn = document.getElementById('theme-toggle-btn');
@@ -828,7 +910,7 @@
     }
 
     function currentSnapshot() {
-        return JSON.stringify({slideWidth, slideHeight, gridSize, isDarkMode, slides});
+        return JSON.stringify({slideWidth, slideHeight, gridSize, isDarkMode, rawTexMacros, slides});
     }
 
     async function autoSaveTick() {
@@ -1142,6 +1224,7 @@
                         {left: "\\(", right: "\\)", display: false},
                         {left: "\\[", right: "\\]", display: true}
                     ],
+                    macros: projectMacros,
                     throwOnError: false
                 });
             } catch (e) {
@@ -1667,6 +1750,7 @@
         let htmlContent = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>${escapeHtml(projectName || 'Presentation')}</title>
             <style>${katexCss}</style>
             <style>
+                .katex .mathbb { font-family: 'KaTeX_Math', 'Times New Roman', serif !important; font-weight: bold; letter-spacing: 0.05em; }
                 body { background: #0f172a; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; overflow: hidden; }
                 .slide-wrapper { width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; position: relative; }
                 .slide { width: ${slideWidth}px; height: ${slideHeight}px; aspect-ratio: 16 / 9; background: ${activeSlideBg}; position: absolute; box-shadow: 0 25px 50px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden; display: none; }
