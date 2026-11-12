@@ -638,10 +638,13 @@
 <div class="modal-backdrop" id="macros-modal">
     <div class="modal" style="width: 500px;">
         <h2>LaTeX Macros</h2>
-        <p>Define macros using standard LaTeX syntax. Packages like <code>\usepackage{amssymb}</code> are safely handled.</p>
+        <p>Define macros using standard LaTeX syntax. Packages like <code>\usepackage{amssymb}</code> are safely
+            handled.</p>
         <div class="prop-group">
             <label>Macros Definition (.tex)</label>
-            <textarea id="macros-textarea" class="prop-control" rows="10" placeholder='\usepackage{amssymb}&#10;\newcommand{\R}{\mathbb{R}}&#10;\newcommand{\eps}{\varepsilon}' style="font-family: monospace; resize: vertical;"></textarea>
+            <textarea id="macros-textarea" class="prop-control" rows="10"
+                      placeholder='\usepackage{amssymb}&#10;\newcommand{\R}{\mathbb{R}}&#10;\newcommand{\eps}{\varepsilon}'
+                      style="font-family: monospace; resize: vertical;"></textarea>
         </div>
         <div class="modal-error" id="macros-error"></div>
         <div class="modal-actions">
@@ -795,13 +798,41 @@
         document.getElementById('macros-modal').classList.remove('show');
     }
 
-    function saveMacros() {
+    async function loadProjectMacrosFromDisk() {
+        if (!window.pywebview || !window.pywebview.api || !projectFolder) {
+            rawTexMacros = defaultTexMacros;
+            projectMacros = parseTexMacros(rawTexMacros);
+            return;
+        }
+
+        const res = await window.pywebview.api.load_text_file(projectFolder, 'macros.tex');
+        if (res.success) {
+            rawTexMacros = res.content;
+            projectMacros = parseTexMacros(rawTexMacros);
+        } else {
+            // Fallback if macros.tex doesn't exist in folder yet
+            rawTexMacros = defaultTexMacros;
+            projectMacros = parseTexMacros(rawTexMacros);
+            // Save defaults to disk silently
+            await window.pywebview.api.save_text_file(projectFolder, 'macros.tex', rawTexMacros);
+            await window.pywebview.api.save_text_file(projectFolder, 'macros.json', JSON.stringify(projectMacros, null, 2));
+        }
+    }
+
+    async function saveMacros() {
         const textarea = document.getElementById('macros-textarea');
         const errEl = document.getElementById('macros-error');
         try {
             rawTexMacros = textarea.value;
             projectMacros = parseTexMacros(rawTexMacros);
             markDirty();
+
+            if (window.pywebview && window.pywebview.api && projectFolder) {
+                // Silently write macros.tex and macros.json to the project folder
+                await window.pywebview.api.save_text_file(projectFolder, 'macros.tex', rawTexMacros);
+                await window.pywebview.api.save_text_file(projectFolder, 'macros.json', JSON.stringify(projectMacros, null, 2));
+            }
+
             closeMacrosModal();
             renderEditor();
         } catch (e) {
@@ -845,6 +876,7 @@
     });
 
     function serializeProject() {
+        // NOTE: rawTexMacros and projectMacros are intentionally excluded here
         return JSON.stringify({
             version: 1,
             name: projectName,
@@ -852,7 +884,6 @@
             slideHeight: slideHeight,
             gridSize: gridSize,
             isDarkMode: isDarkMode,
-            rawTexMacros: rawTexMacros,
             slides: slides
         });
     }
@@ -866,8 +897,6 @@
         gridSize = data.gridSize !== undefined ? data.gridSize : 20;
         isDarkMode = !!data.isDarkMode;
         projectName = data.name || 'Untitled Project';
-        rawTexMacros = data.rawTexMacros || '\\newcommand{\\R}{\\mathbb{R}}';
-        projectMacros = parseTexMacros(rawTexMacros);
 
         document.body.classList.toggle('dark-mode', isDarkMode);
         const btn = document.getElementById('theme-toggle-btn');
@@ -1040,6 +1069,23 @@
         projectPath = res.path;
         projectFolder = res.folder;
 
+        // Initialize default macro files in the new folder
+        // Default macros template for new projects
+        let defaultTexMacros = `\\usepackage{amssymb}
+                                \\usepackage{amsfonts}
+                                \\newcommand{\\R}{\\mathbb{R}}
+                                \\newcommand{\\N}{\\mathbb{N}}
+                                \\newcommand{\\eps}{\\varepsilon}
+                                \\newcommand{\\vec}[1]{\\mathbf{#1}}`;
+
+        let rawTexMacros = defaultTexMacros;
+        let projectMacros = parseTexMacros(rawTexMacros);
+
+        rawTexMacros = defaultTexMacros;
+        projectMacros = parseTexMacros(rawTexMacros);
+        await window.pywebview.api.save_text_file(projectFolder, 'macros.tex', rawTexMacros);
+        await window.pywebview.api.save_text_file(projectFolder, 'macros.json', JSON.stringify(projectMacros, null, 2));
+
         const saveRes = await window.pywebview.api.save_project_data(projectPath, serializeProject());
         if (!saveRes.success) {
             err.textContent = saveRes.error;
@@ -1095,6 +1141,10 @@
             deserializeProject(content);
             projectPath = path;
             projectFolder = path.replace(/[/\\][^/\\]+$/, '');
+
+            // Load decoupled macros from project folder
+            await loadProjectMacrosFromDisk();
+
             addRecent(projectName, path);
             lastSnapshot = currentSnapshot();
             isDirty = false;

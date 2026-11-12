@@ -137,6 +137,32 @@ class Api:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def save_text_file(self, folder_path, filename, content):
+        """Silently saves a text file inside the given folder without a dialog."""
+        try:
+            if not folder_path:
+                return {"success": False, "error": "No folder path provided"}
+            file_path = os.path.join(folder_path, filename)
+            with open(file_path, "w", encoding="utf-8") as f:
+                f.write(content)
+            return {"success": True, "path": file_path}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def load_text_file(self, folder_path, filename):
+        """Silently loads a text file from the given folder."""
+        try:
+            if not folder_path:
+                return {"success": False, "error": "No folder path provided"}
+            file_path = os.path.join(folder_path, filename)
+            if os.path.exists(file_path):
+                with open(file_path, "r", encoding="utf-8") as f:
+                    content = f.read()
+                return {"success": True, "content": content}
+            return {"success": False, "error": "File not found"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
 
 if __name__ == '__main__':
     check_and_install_dependencies()
