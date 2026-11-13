@@ -1026,7 +1026,7 @@ function updateProp(propName, value) {
     updateThumbnailLive();
 }
 
-async function getExportHtmlString(forPdf = false) {
+async function getExportHtmlString() {
     let katexCss = '';
     try {
         const resp = await fetch('libs/katex.min.css');
@@ -1041,11 +1041,9 @@ async function getExportHtmlString(forPdf = false) {
 
     let slidesMarkup = '';
     slides.forEach((s, idx) => {
-        const displayStyle = forPdf ? 'display: block; margin-bottom: 40px;' : '';
-        const positionStyle = forPdf ? 'position: relative;' : 'position: absolute;';
-        const slideStyle = `width: ${slideWidth}px; height: ${slideHeight}px; aspect-ratio: 16 / 9; background: ${activeSlideBg}; ${positionStyle} box-shadow: 0 25px 50px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden; ${displayStyle}`;
+        const slideStyle = `width: ${slideWidth}px; height: ${slideHeight}px; aspect-ratio: 16 / 9; background: ${activeSlideBg}; position: absolute; box-shadow: 0 25px 50px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden;`;
 
-        slidesMarkup += `<div class="slide ${!forPdf && idx === 0 ? 'active' : ''}" id="slide-${idx}" style="${slideStyle}">`;
+        slidesMarkup += `<div class="slide ${idx === 0 ? 'active' : ''}" id="slide-${idx}" style="${slideStyle}">`;
         s.elements.forEach(el => {
             let style = `position: absolute; left:${el.x}px; top:${el.y}px; width:${el.width}px; height:${el.height}px; background-color:${el.bg}; border: ${el.borderWidth}px ${el.borderStyle} ${el.borderCol}; box-sizing: border-box;`;
             if (el.type === 'text') {
@@ -1076,127 +1074,266 @@ async function getExportHtmlString(forPdf = false) {
         <style>${katexCss}</style>
         <style>
             .katex .mathbb { font-family: 'KaTeX_Math', 'Times New Roman', serif !important; font-weight: bold; letter-spacing: 0.05em; }
-            body { background: #0f172a; display: flex; justify-content: center; align-items: center; ${forPdf ? 'height: auto;' : 'height: 100vh;'} margin: 0; font-family: sans-serif; overflow: hidden; }
-            .slide-wrapper { width: 100vw; ${forPdf ? 'height: auto;' : 'height: 100vh;'} display: flex; ${forPdf ? 'flex-direction: column;' : ''} justify-content: center; align-items: center; position: relative; }
+            body { background: #0f172a; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; overflow: hidden; }
+            .slide-wrapper { width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; position: relative; }
             .slide { display: none; }
             .slide.active { display: block; }
             .katex-mathml { display: none !important; }
             .nav-hint { position: fixed; bottom: 20px; color: #94a3b8; font-size: 14px; pointer-events: none; z-index: 1000; }
+
+            /* ---- Print: one page per slide, page size == slide size ---- */
+            @page {
+                size: ${slideWidth}px ${slideHeight}px;
+                margin: 0;
+            }
+            @media print {
+                body {
+                    height: auto;
+                    display: block;
+                    background: #ffffff;
+                }
+                .slide-wrapper {
+                    width: auto;
+                    height: auto;
+                    display: block;
+                    position: static;
+                }
+                .slide {
+                    display: block !important;
+                    position: relative !important;   /* ← overrides the inline absolute */
+                    left: 0 !important;
+                    top: 0 !important;
+                    margin: 0 !important;
+                    box-shadow: none !important;
+                    border-radius: 0 !important;
+                    page-break-after: always;
+                    break-after: page;
+                }
+                .slide:last-child {
+                    page-break-after: auto;
+                    break-after: auto;
+                }
+                .nav-hint {
+                    display: none;
+                }
+            }
         </style></head><body><div class="slide-wrapper">`;
 
     htmlContent += slidesMarkup;
-
-    if (!forPdf) {
-        htmlContent += `</div><div class="nav-hint">Use [Space] or [→] to go forward, [←] to go backward</div>`;
-        htmlContent += `<script>
-                let current = 0;
-                const total = ${slides.length};
-                document.addEventListener('keydown', (e) => {
-                    if (e.code === 'Space' || e.code === 'ArrowRight') {
-                        if (current < total - 1) {
-                            document.getElementById('slide-' + current).classList.remove('active');
-                            current++;
-                            document.getElementById('slide-' + current).classList.add('active');
-                        }
-                    } else if (e.code === 'ArrowLeft') {
-                        if (current > 0) {
-                            document.getElementById('slide-' + current).classList.remove('active');
-                            current--;
-                            document.getElementById('slide-' + current).classList.add('active');
-                        }
+    htmlContent += `</div><div class="nav-hint">Use [Space] or [→] to go forward, [←] to go backward</div>`;
+    htmlContent += `<script>
+            let current = 0;
+            const total = ${slides.length};
+            document.addEventListener('keydown', (e) => {
+                if (e.code === 'Space' || e.code === 'ArrowRight') {
+                    if (current < total - 1) {
+                        document.getElementById('slide-' + current).classList.remove('active');
+                        current++;
+                        document.getElementById('slide-' + current).classList.add('active');
                     }
-                });
-            <\/script>`;
-    } else {
-        htmlContent += `</div>`;
-    }
+                } else if (e.code === 'ArrowLeft') {
+                    if (current > 0) {
+                        document.getElementById('slide-' + current).classList.remove('active');
+                        current--;
+                        document.getElementById('slide-' + current).classList.add('active');
+                    }
+                }
+            });
+        <\/script></body></html>`;
 
-    htmlContent += `</body></html>`;
     return htmlContent;
 }
+
+// =====================================================================
+// PDF capture via the browser's REAL renderer (no html2canvas).
+//
+// Each slide is serialized into an SVG <foreignObject> and drawn onto a
+// canvas with drawImage(). Because the rasterization is done by the
+// browser's own layout engine — the exact same engine that renders the
+// exported HTML correctly — the PDF matches the HTML viewer by
+// construction. All CSS and fonts must be inlined as data URIs for this
+// to work, since foreignObject content cannot load external resources.
+// =====================================================================
+
+// ---- helpers ---------------------------------------------------------
+
+
+function arrayBufferToBase64(buffer) {
+    let binary = '';
+    const bytes = new Uint8Array(buffer);
+    const chunk = 0x8000;
+    for (let i = 0; i < bytes.length; i += chunk) {
+        binary += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+    }
+    return btoa(binary);
+}
+
+let _embeddedKatexCssPromise = null;
+
+function getEmbeddedKatexCss() {
+    if (_embeddedKatexCssPromise) return _embeddedKatexCssPromise;
+    _embeddedKatexCssPromise = (async () => {
+        const base = 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/';
+        let css = await (await fetch('libs/katex.min.css')).text();
+
+        const seen = new Map();
+        for (const m of css.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g)) {
+            const raw = m[1];
+            if (raw.startsWith('data:') || /^https?:/.test(raw)) seen.set(raw, raw);
+            else seen.set(raw, base + raw.replace(/^\.\//, ''));
+        }
+
+        for (const [raw, abs] of seen) {
+            try {
+                const resp = await fetch(abs);
+                if (!resp.ok) throw new Error(resp.status);
+                const buf = await resp.arrayBuffer();
+                const mime = abs.endsWith('.woff2') ? 'font/woff2'
+                    : abs.endsWith('.woff') ? 'font/woff'
+                        : abs.endsWith('.ttf') ? 'font/ttf'
+                            : 'application/octet-stream';
+                css = css.split(raw).join(`data:${mime};base64,${arrayBufferToBase64(buf)}`);
+            } catch (e) {
+                console.warn('Could not embed KaTeX font:', abs, e);
+            }
+        }
+        return css;
+    })();
+    return _embeddedKatexCssPromise;
+}
+
+function slideMarkupForPdf(s, idx) {
+    const activeSlideBg = isDarkMode ? '#1e293b' : '#ffffff';
+    const slideStyle = `width: ${slideWidth}px; height: ${slideHeight}px; background: ${activeSlideBg}; position: relative; box-shadow: 0 25px 50px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden;`;
+
+    let markup = `<div class="slide" style="${slideStyle}">`;
+    s.elements.forEach(el => {
+        let style = `position: absolute; left:${el.x}px; top:${el.y}px; width:${el.width}px; height:${el.height}px; background-color:${el.bg}; border: ${el.borderWidth}px ${el.borderStyle} ${el.borderCol}; box-sizing: border-box;`;
+        if (el.type === 'text') {
+            style += `font-size:${el.fontSize}px; font-family:${el.fontFamily}; color:${el.fontColor}; padding:8px; display: flex; flex-direction: column; overflow: hidden;`;
+
+            const vAlign = el.verticalAlign || 'center';
+            if (vAlign === 'top') style += 'justify-content:flex-start;';
+            else if (vAlign === 'bottom') style += 'justify-content:flex-end;';
+            else style += 'justify-content:center;';
+
+            const hAlign = el.textAlign || 'center';
+            style += `text-align:${hAlign};`;
+            if (hAlign === 'left') style += 'align-items:flex-start;';
+            else if (hAlign === 'right') style += 'align-items:flex-end;';
+            else style += 'align-items:center;';
+
+            const tempDiv = document.createElement('div');
+            renderMarkdownAndKatex(tempDiv, el.content);
+            markup += `<div class="el" style="${style}">${tempDiv.innerHTML}</div>`;
+        } else {
+            markup += `<div class="el" style="${style}"></div>`;
+        }
+    });
+    markup += `</div>`;
+    return markup;
+}
+
+function rasterizeSlide(markup, embeddedCss, scale) {
+    return new Promise((resolve, reject) => {
+        const slideXml = new DOMParser().parseFromString(
+            `<div xmlns="http://www.w3.org/1999/xhtml">${markup}</div>`, 'text/xml');
+        if (slideXml.querySelector('parsererror')) {
+            reject(new Error('Slide markup not XML-clean; text may contain raw & or unclosed tags'));
+            return;
+        }
+
+        const svgString =
+            `<svg xmlns="http://www.w3.org/2000/svg" width="${slideWidth}" height="${slideHeight}">` +
+            `<foreignObject width="100%" height="100%">` +
+            `<div xmlns="http://www.w3.org/1999/xhtml" style="width:${slideWidth}px;height:${slideHeight}px;overflow:hidden;">` +
+            `<style>${embeddedCss}</style>` +
+            slideXml.documentElement.innerHTML +
+            `</div></foreignObject></svg>`;
+
+        const img = new Image();
+        img.onload = () => {
+            const canvas = document.createElement('canvas');
+            canvas.width = slideWidth * scale;
+            canvas.height = slideHeight * scale;
+            const ctx = canvas.getContext('2d');
+            ctx.scale(scale, scale);
+            ctx.drawImage(img, 0, 0, slideWidth, slideHeight);
+            resolve(canvas.toDataURL('image/jpeg', 0.95));
+        };
+        img.onerror = () => reject(new Error('Failed to rasterize slide'));
+        img.src = 'data:image/svg+xml;charset=utf-8,' + encodeURIComponent(svgString);
+    });
+}
+
+/**
+ * Fallback: rasterize slides and hand JPEGs to the backend.
+ */
+async function exportAsRasterPdf(htmlPath, exportStartDir, baseName) {
+    const embeddedCss = await getEmbeddedKatexCss();
+    await document.fonts.ready;
+
+    const imageDataList = [];
+    for (let idx = 0; idx < slides.length; idx++) {
+        imageDataList.push(await rasterizeSlide(slideMarkupForPdf(slides[idx], idx), embeddedCss, 2));
+    }
+
+    // One dialog for the PDF; HTML already saved next to it
+    const pdfRes = await window.pywebview.api.save_pdf_from_images(imageDataList, `${baseName}.pdf`, exportStartDir);
+    return pdfRes.success
+        ? {ok: true, pdfPath: pdfRes.path}
+        : {ok: false, error: pdfRes.error};
+}
+
+/**
+ * Preferred: ask the backend to drive a headless Chromium/Edge render.
+ */
+async function exportAsVectorPdf(htmlPath) {
+    const pdfPath = htmlPath.replace(/\.[^.]+$/, '') + '.pdf';
+    return window.pywebview.api.print_html_to_pdf(htmlPath, pdfPath, 5000);
+}
+
+// ---- main export orchestration ---------------------------------------
 
 async function triggerExport(type) {
     document.getElementById('export-menu').classList.remove('show');
     const exportStartDir = projectFolder || null;
     const baseName = (projectName || 'presentation').replace(/\s+/g, '_');
 
-    if (type === 'pdf') {
-        const exportContainer = document.getElementById('print-export-container');
-        exportContainer.innerHTML = '';
-        exportContainer.style.display = 'block';
-        exportContainer.style.position = 'absolute';
-        exportContainer.style.left = '-9999px';
-        exportContainer.style.width = `${slideWidth}px`;
-
-        // Generate markup with forPdf = true so html2canvas can see and snap all slides
-        const fullHtmlForPdf = await getExportHtmlString(true);
-        exportContainer.innerHTML = fullHtmlForPdf;
-
-        try {
-            await document.fonts.ready;
-            await new Promise(resolve => setTimeout(resolve, 800));
-
-            const slideElements = exportContainer.querySelectorAll('.slide');
-            const imageDataList = [];
-
-            for (let slideEl of slideElements) {
-                const canvas = await html2canvas(slideEl, {
-                    scale: 2,
-                    useCORS: true,
-                    logging: false,
-                    windowWidth: slideWidth,
-                    windowHeight: slideHeight
-                });
-                imageDataList.push(canvas.toDataURL('image/jpeg', 0.95));
-            }
-
-            exportContainer.style.display = 'none';
-
-            if (window.pywebview && window.pywebview.api) {
-                const pdfRes = await window.pywebview.api.save_pdf_from_images(imageDataList, `${baseName}.pdf`, exportStartDir);
-                if (!pdfRes.success) {
-                    if (pdfRes.error !== "Cancelled") alert(`PDF Export failed: ${pdfRes.error}`);
-                    return;
-                }
-
-                // Automatically save the companion HTML file using the inferred path from the saved PDF
-                const pdfPath = pdfRes.path;
-                const folderPath = pdfPath.substring(0, Math.max(pdfPath.lastIndexOf('/'), pdfPath.lastIndexOf('\\')));
-                const fileNameBase = pdfPath.substring(Math.max(pdfPath.lastIndexOf('/'), pdfPath.lastIndexOf('\\')) + 1).replace(/\.[^/.]+$/, '');
-                const htmlFilename = fileNameBase + '.html';
-
-                const htmlContent = await getExportHtmlString(false); // Clean interactive version for HTML export
-                await window.pywebview.api.save_text_file(folderPath, htmlFilename, htmlContent);
-
-                alert(`Successfully exported PDF and inferred HTML to:\n${pdfPath}`);
-            }
-        } catch (err) {
-            exportContainer.style.display = 'none';
-            alert(`PDF Export error: ${err.message}`);
+    if (type === 'pdf' || type === 'html') {
+        // 1. ONE dialog: user picks where the HTML goes.
+        const htmlContent = await getExportHtmlString(false);
+        const htmlRes = await window.pywebview.api.save_file(htmlContent, `${baseName}.html`, "html", exportStartDir);
+        if (!htmlRes.success) {
+            if (htmlRes.error !== 'Cancelled') alert(`Export failed: ${htmlRes.error}`);
+            return;
         }
-        return;
-    }
+        const htmlPath = htmlRes.path;
 
-    // Standard Interactive HTML Export (arrow keys fully functional)
-    const htmlContent = await getExportHtmlString(false);
-
-    if (window.pywebview && window.pywebview.api) {
-        const res = await window.pywebview.api.save_file(htmlContent, `${baseName}.html`, "html", exportStartDir);
-        if (res.success) {
-            alert(`Successfully exported presentation to: ${res.path}`);
-        } else if (res.error !== "Cancelled") {
-            alert(`Export failed: ${res.error}`);
+        // 2. HTML-only export stops here.
+        if (type === 'html') {
+            alert(`Successfully exported presentation to:\n${htmlPath}`);
+            return;
         }
-    } else {
-        const blob = new Blob([htmlContent], {type: 'text/html'});
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'presentation.html';
-        a.click();
-        URL.revokeObjectURL(url);
+
+        // 3. PDF export: try vector (headless browser) first, fall back
+        //    to raster capture if no suitable browser is available.
+        const vec = await exportAsVectorPdf(htmlPath);
+        if (vec.success) {
+            alert(`Successfully exported PDF and HTML to:\n${vec.path}\n\n(vector PDF via headless browser)`);
+            return;
+        }
+        console.warn('Vector PDF unavailable:', vec.error);
+
+        const raster = await exportAsRasterPdf(htmlPath, exportStartDir, baseName);
+        if (raster.ok) {
+            alert(`Successfully exported PDF and HTML to:\n${raster.pdfPath}\n\n(raster PDF — install Chrome/Edge for sharper vector output)`);
+        } else {
+            alert(`HTML exported to:\n${htmlPath}\n\nBut PDF export failed: ${raster.error}`);
+        }
     }
 }
+
 
 function escapeHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');

@@ -2,6 +2,8 @@ import os
 import json
 import base64
 import io
+import shutil
+import subprocess
 import webview
 from PIL import Image
 from requirements import check_and_install_dependencies
@@ -106,6 +108,7 @@ class Api:
             return {"success": False, "error": str(e)}
 
     def save_pdf_from_images(self, image_data_list, default_filename="presentation.pdf", start_dir=None):
+        """Fallback path: build a PDF from rasterized slide images."""
         window = webview.windows[0]
         file_path = window.create_file_dialog(
             webview.SAVE_DIALOG,
@@ -160,6 +163,100 @@ class Api:
                     content = f.read()
                 return {"success": True, "content": content}
             return {"success": False, "error": "File not found"}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    # ------------------------------------------------------------------
+    # Headless-browser PDF generation (vector, pixel-perfect)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _find_chromium_browser():
+        """Locate an installed Chromium-family browser for headless printing.
+        Returns an executable path or None."""
+        candidates = []
+
+        # PATH lookup first (linux/mac chromium installs, pinned versions)
+        for name in ("chrome", "chromium", "chromium-browser", "google-chrome"):
+            found = shutil.which(name)
+            if found:
+                candidates.append(found)
+
+        if os.name == 'nt':  # Windows
+            base = os.environ.get('PROGRAMFILES', r'C:\Program Files')
+            base86 = os.environ.get('PROGRAMFILES(X86)', r'C:\Program Files (x86)')
+            local = os.environ.get('LOCALAPPDATA', '')
+            for root in (base, base86, local):
+                if not root:
+                    continue
+                candidates += [
+                    os.path.join(root, 'Microsoft', 'Edge', 'Application', 'msedge.exe'),
+                    os.path.join(root, 'Google', 'Chrome', 'Application', 'chrome.exe'),
+                ]
+        elif os.uname().sysname == 'Darwin':  # macOS
+            candidates += [
+                '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
+                '/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge',
+                '/Applications/Chromium.app/Contents/MacOS/Chromium',
+            ]
+        else:  # Linux standard install dirs
+            candidates += [
+                '/usr/bin/google-chrome',
+                '/usr/bin/chromium',
+                '/usr/bin/chromium-browser',
+                '/snap/bin/chromium',
+            ]
+
+        for c in candidates:
+            if c and os.path.isfile(c):
+                return c
+        return None
+
+    def print_html_to_pdf(self, html_path, pdf_path=None, wait_ms=4000):
+        """Render an HTML file to PDF using a headless Chromium-family
+        browser (Edge/Chrome). Vector output, pixel-perfect math, fully
+        autonomous — no dialogs, no user interaction.
+        """
+        try:
+            if not html_path or not os.path.isfile(html_path):
+                return {"success": False, "error": f"HTML file not found: {html_path}"}
+
+            if not pdf_path:
+                pdf_path = os.path.splitext(html_path)[0] + '.pdf'
+
+            browser = self._find_chromium_browser()
+            if not browser:
+                return {"success": False, "error": "No Chromium-family browser found for headless PDF export."}
+
+            uri = 'file:///' + os.path.abspath(html_path).replace('\\', '/')
+
+            cmd = [
+                browser,
+                '--headless',
+                '--disable-gpu',
+                f'--print-to-pdf={os.path.abspath(pdf_path)}',
+                '--no-pdf-header-footer',
+                f'--virtual-time-budget={wait_ms}',  # let KaTeX fonts load
+                uri,
+            ]
+
+            result = subprocess.run(
+                cmd,
+                capture_output=True,
+                text=True,
+                timeout=60,
+                # Headless Chrome must not inherit the app's user profile lock
+                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
+            )
+
+            if os.path.isfile(pdf_path) and os.path.getsize(pdf_path) > 0:
+                return {"success": True, "path": pdf_path, "engine": browser}
+            return {
+                "success": False,
+                "error": f"Headless render failed: {result.stderr.strip()[:300] or 'no output file produced'}",
+            }
+        except subprocess.TimeoutExpired:
+            return {"success": False, "error": "Headless render timed out."}
         except Exception as e:
             return {"success": False, "error": str(e)}
 
