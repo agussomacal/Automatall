@@ -166,6 +166,59 @@ class Api:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def save_direct_file(self, folder_path, filename, content):
+        """Directly save a file in the project folder without a dialog."""
+        try:
+            if not folder_path or not os.path.exists(folder_path):
+                return {"success": False, "error": "Project folder not set or does not exist."}
+            file_path = os.path.join(folder_path, filename)
+            with open(file_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            return {"success": True, "path": file_path}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def save_direct_pdf_from_images(self, folder_path, filename, image_data_list):
+        """Directly save a PDF from images in the project folder without a dialog."""
+        try:
+            if not folder_path or not os.path.exists(folder_path):
+                return {"success": False, "error": "Project folder not set or does not exist."}
+            file_path = os.path.join(folder_path, filename)
+
+            pil_images = []
+            for img_base64 in image_data_list:
+                header, encoded = img_base64.split(",", 1)
+                data = base64.b64decode(encoded)
+                image = Image.open(io.BytesIO(data)).convert("RGB")
+                pil_images.append(image)
+
+            if pil_images:
+                pil_images[0].save(
+                    file_path,
+                    "PDF",
+                    save_all=True,
+                    append_images=pil_images[1:]
+                )
+            return {"success": True, "path": file_path}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def open_file_with_system(self, file_path):
+        """Open a file using the OS default viewer or browser."""
+        try:
+            if not file_path or not os.path.exists(file_path):
+                return {"success": False, "error": "File not found."}
+
+            if os.name == 'nt':  # Windows
+                os.startfile(file_path)
+            elif os.uname().sysname == 'Darwin':  # macOS
+                subprocess.run(['open', file_path])
+            else:  # Linux
+                subprocess.run(['xdg-open', file_path])
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
     # ------------------------------------------------------------------
     # Headless-browser PDF generation (vector, pixel-perfect)
     # ------------------------------------------------------------------
@@ -234,9 +287,11 @@ class Api:
                 browser,
                 '--headless',
                 '--disable-gpu',
+                '--no-sandbox',  # <--- Fixes Linux zygote / broken pipe crash
+                '--disable-dev-shm-usage',  # <--- Fixes shared memory limitations
                 f'--print-to-pdf={os.path.abspath(pdf_path)}',
                 '--no-pdf-header-footer',
-                f'--virtual-time-budget={wait_ms}',  # let KaTeX fonts load
+                f'--virtual-time-budget={wait_ms}',
                 uri,
             ]
 
@@ -245,7 +300,6 @@ class Api:
                 capture_output=True,
                 text=True,
                 timeout=60,
-                # Headless Chrome must not inherit the app's user profile lock
                 creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0,
             )
 

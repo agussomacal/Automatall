@@ -1294,43 +1294,59 @@ async function exportAsVectorPdf(htmlPath) {
 }
 
 // ---- main export orchestration ---------------------------------------
+// ---- Direct export orchestration (silent, no dialogs, auto-open) ----
+async function directExport(type) {
+    if (!projectFolder) {
+        alert("Please create or open a project folder first before exporting.");
+        return;
+    }
 
-async function triggerExport(type) {
-    document.getElementById('export-menu').classList.remove('show');
-    const exportStartDir = projectFolder || null;
     const baseName = (projectName || 'presentation').replace(/\s+/g, '_');
+    const htmlFilename = `${baseName}.html`;
+    const pdfFilename = `${baseName}.pdf`;
 
-    if (type === 'pdf' || type === 'html') {
-        // 1. ONE dialog: user picks where the HTML goes.
-        const htmlContent = await getExportHtmlString(false);
-        const htmlRes = await window.pywebview.api.save_file(htmlContent, `${baseName}.html`, "html", exportStartDir);
-        if (!htmlRes.success) {
-            if (htmlRes.error !== 'Cancelled') alert(`Export failed: ${htmlRes.error}`);
-            return;
+    // 1. Generate and save the HTML file silently in the project folder
+    const htmlContent = await getExportHtmlString(false);
+    const htmlSaveRes = await window.pywebview.api.save_text_file(projectFolder, htmlFilename, htmlContent);
+
+    if (!htmlSaveRes.success) {
+        alert(`Export failed to save HTML: ${htmlSaveRes.error}`);
+        return;
+    }
+    const htmlPath = htmlSaveRes.path;
+
+    // 2. If HTML-only export was requested, open it and finish
+    if (type === 'html') {
+        await window.pywebview.api.open_file_with_system(htmlPath);
+        return;
+    }
+
+    // 3. PDF Export: Try headless vector PDF first
+    const vec = await exportAsVectorPdf(htmlPath);
+    if (vec.success) {
+        await window.pywebview.api.open_file_with_system(vec.path);
+        return;
+    }
+    console.warn('Vector PDF unavailable, falling back to raster engine:', vec.error);
+
+    // 4. Fallback: Rasterize via SVG foreignObject and save silently
+    try {
+        const embeddedCss = await getEmbeddedKatexCss();
+        await document.fonts.ready;
+
+        const imageDataList = [];
+        for (let idx = 0; idx < slides.length; idx++) {
+            imageDataList.push(await rasterizeSlide(slideMarkupForPdf(slides[idx], idx), embeddedCss, 2));
         }
-        const htmlPath = htmlRes.path;
 
-        // 2. HTML-only export stops here.
-        if (type === 'html') {
-            alert(`Successfully exported presentation to:\n${htmlPath}`);
-            return;
-        }
-
-        // 3. PDF export: try vector (headless browser) first, fall back
-        //    to raster capture if no suitable browser is available.
-        const vec = await exportAsVectorPdf(htmlPath);
-        if (vec.success) {
-            alert(`Successfully exported PDF and HTML to:\n${vec.path}\n\n(vector PDF via headless browser)`);
-            return;
-        }
-        console.warn('Vector PDF unavailable:', vec.error);
-
-        const raster = await exportAsRasterPdf(htmlPath, exportStartDir, baseName);
-        if (raster.ok) {
-            alert(`Successfully exported PDF and HTML to:\n${raster.pdfPath}\n\n(raster PDF — install Chrome/Edge for sharper vector output)`);
+        const rasterRes = await window.pywebview.api.save_direct_pdf_from_images(projectFolder, pdfFilename, imageDataList);
+        if (rasterRes.success) {
+            await window.pywebview.api.open_file_with_system(rasterRes.path);
         } else {
-            alert(`HTML exported to:\n${htmlPath}\n\nBut PDF export failed: ${raster.error}`);
+            alert(`HTML exported successfully, but raster PDF export failed: ${rasterRes.error}`);
         }
+    } catch (err) {
+        alert(`PDF Export error: ${err.message}`);
     }
 }
 
@@ -1339,16 +1355,6 @@ function escapeHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-async function addRecent(name, path) {
-    recents = recents.filter(r => r.path !== path);
-    recents.unshift({name, path});
-    recents = recents.slice(0, 10);
-    renderRecents();
-
-    if (window.pywebview && window.pywebview.api) {
-        await window.pywebview.api.add_recent_project(name, path);
-    }
-}
 
 function renderRecents() {
     const ul = document.getElementById('project-list');

@@ -80,6 +80,12 @@
         <div class="sidebar-header">
             <h3>Project Slides</h3>
             <span class="save-indicator" id="save-indicator">Saved ✓</span>
+            <button class="toolbar-btn" title="View HTML export" onclick="directExport('html')"
+                    style="padding: 6px 10px; min-width: auto;">🌐
+            </button>
+            <button class="toolbar-btn" title="View PDF export" onclick="directExport('pdf')"
+                    style="padding: 6px 10px; min-width: auto;">📄
+            </button>
         </div>
         <div class="slides-thumb-list" id="slides-thumb-list"></div>
 
@@ -91,19 +97,6 @@
             <button class="sidebar-btn" onclick="openMacrosModal()">
                 <span>⚙️</span> Edit LaTeX Macros...
             </button>
-            <div class="export-dropdown">
-                <div class="export-menu" id="export-menu">
-                    <button class="export-menu-item" onclick="triggerExport('html')">
-                        <span>🌐</span> Export as Interactive HTML
-                    </button>
-                    <button class="export-menu-item" onclick="triggerExport('pdf')">
-                        <span>📄</span> Export as PDF
-                    </button>
-                </div>
-                <button class="sidebar-btn" onclick="toggleExportMenu(event)">
-                    <span>📥</span> Export Presentation... <span style="margin-left: auto;">▲</span>
-                </button>
-            </div>
             <button class="sidebar-btn" onclick="goToHome()">
                 <span>←</span> Back to Home
             </button>
