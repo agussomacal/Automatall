@@ -15,6 +15,10 @@ dependencies:
     url: "https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"
     description: "html2canvas library for PDF slide export"
 
+  - name: marked.min.js
+    url: "https://cdn.jsdelivr.net/npm/marked/marked.min.js"
+    description: "marked library for markdown support"
+
 fonts:
   - name: "KaTeX_AMS-Regular.woff2"
     url: "https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/fonts/KaTeX_AMS-Regular.woff2"

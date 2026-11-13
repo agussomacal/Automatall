@@ -421,10 +421,12 @@ function openSampleProject() {
                     y: 200,
                     width: 800,
                     height: 160,
-                    content: 'Welcome to Slide Studio with LaTeX: $E = mc^2$',
+                    content: 'Welcome to Slide Studio with **Markdown** and LaTeX: $E = mc^2$',
                     fontSize: 42,
                     fontFamily: 'sans-serif',
                     fontColor: '#0f172a',
+                    textAlign: 'center',
+                    verticalAlign: 'center',
                     bg: 'transparent',
                     borderCol: 'transparent',
                     borderWidth: 0,
@@ -499,14 +501,16 @@ function addElement(type) {
         y: Math.round(200 + (currentSlide.elements.length * 30)),
         width: type === 'text' ? Math.round(600 * scaleFactor) : Math.round(350 * scaleFactor),
         height: type === 'text' ? Math.round(150 * scaleFactor) : Math.round(200 * scaleFactor),
-        content: type === 'text' ? 'Type text or math like $x^2 + y^2 = r^2$' : '',
+        content: type === 'text' ? 'Type **markdown** or math like $x^2 + y^2 = r^2$' : '',
         bg: type === 'text' ? 'transparent' : (isDarkMode ? '#334155' : '#cbd5e1'),
         borderCol: type === 'text' ? 'transparent' : (isDarkMode ? '#64748b' : '#475569'),
         borderWidth: type === 'text' ? 0 : 2,
         borderStyle: 'solid',
         fontSize: Math.round(32 * scaleFactor),
         fontFamily: 'sans-serif',
-        fontColor: isDarkMode ? '#f8fafc' : '#0f172a'
+        fontColor: isDarkMode ? '#f8fafc' : '#0f172a',
+        textAlign: 'center',
+        verticalAlign: 'center'
     };
     currentSlide.elements.push(newElement);
     selectedElementIndex = currentSlide.elements.length - 1;
@@ -514,8 +518,16 @@ function addElement(type) {
     renderEditor();
 }
 
-function renderKatexContent(element, rawText) {
-    element.innerHTML = rawText;
+function renderMarkdownAndKatex(element, rawText) {
+    let html = rawText || '';
+    if (window.marked && typeof window.marked.parse === 'function') {
+        try {
+            html = window.marked.parse(rawText || '');
+        } catch (e) {
+            console.error("Markdown parsing error:", e);
+        }
+    }
+    element.innerHTML = html;
     if (window.renderMathInElement) {
         try {
             renderMathInElement(element, {
@@ -545,6 +557,27 @@ function scheduleLiveUpdate(el, text) {
     markDirty();
     clearTimeout(liveUpdateTimer);
     liveUpdateTimer = setTimeout(updateThumbnailLive, 250);
+}
+
+function applyAlignmentStyles(domEl, el) {
+    if (el.type !== 'text') return;
+
+    // Vertical alignment
+    const vAlign = el.verticalAlign || 'center';
+    if (vAlign === 'top') domEl.style.justifyContent = 'flex-start';
+    else if (vAlign === 'bottom') domEl.style.justifyContent = 'flex-end';
+    else domEl.style.justifyContent = 'center';
+
+    // Horizontal alignment
+    const hAlign = el.textAlign || 'center';
+    domEl.style.textAlign = hAlign;
+    if (hAlign === 'left') {
+        domEl.style.alignItems = 'flex-start';
+    } else if (hAlign === 'right') {
+        domEl.style.alignItems = 'flex-end';
+    } else {
+        domEl.style.alignItems = 'center';
+    }
 }
 
 function renderEditor() {
@@ -607,7 +640,8 @@ function buildThumbElement(el) {
         thumbEl.style.fontSize = `${el.fontSize}px`;
         thumbEl.style.fontFamily = el.fontFamily;
         thumbEl.style.color = el.fontColor;
-        renderKatexContent(thumbEl, el.content);
+        applyAlignmentStyles(thumbEl, el);
+        renderMarkdownAndKatex(thumbEl, el.content);
     }
     return thumbEl;
 }
@@ -676,12 +710,13 @@ function renderCanvas() {
             domEl.style.fontSize = `${el.fontSize}px`;
             domEl.style.fontFamily = el.fontFamily;
             domEl.style.color = el.fontColor;
+            applyAlignmentStyles(domEl, el);
             domEl.contentEditable = "true";
 
             if (selectedElementIndex === elIndex) {
                 domEl.innerText = el.content;
             } else {
-                renderKatexContent(domEl, el.content);
+                renderMarkdownAndKatex(domEl, el.content);
             }
 
             domEl.oninput = (e) => scheduleLiveUpdate(el, e.target.innerText);
@@ -924,6 +959,24 @@ function renderPropertiesPanel() {
                     <input type="color" class="prop-control" value="${el.fontColor}" style="height: 34px; padding: 2px;" oninput="updateProp('fontColor', this.value)">
                 </div>
             </div>
+            <div class="prop-row">
+                <div class="prop-group">
+                    <label>H-Alignment</label>
+                    <select class="prop-control" onchange="updateProp('textAlign', this.value)">
+                        <option value="left" ${(el.textAlign || 'center') === 'left' ? 'selected' : ''}>Left</option>
+                        <option value="center" ${(el.textAlign || 'center') === 'center' ? 'selected' : ''}>Center</option>
+                        <option value="right" ${(el.textAlign || 'center') === 'right' ? 'selected' : ''}>Right</option>
+                    </select>
+                </div>
+                <div class="prop-group">
+                    <label>V-Alignment</label>
+                    <select class="prop-control" onchange="updateProp('verticalAlign', this.value)">
+                        <option value="top" ${(el.verticalAlign || 'center') === 'top' ? 'selected' : ''}>Top</option>
+                        <option value="center" ${(el.verticalAlign || 'center') === 'center' ? 'selected' : ''}>Center</option>
+                        <option value="bottom" ${(el.verticalAlign || 'center') === 'bottom' ? 'selected' : ''}>Bottom</option>
+                    </select>
+                </div>
+            </div>
         `;
     }
 
@@ -973,71 +1026,7 @@ function updateProp(propName, value) {
     updateThumbnailLive();
 }
 
-async function triggerExport(type) {
-    document.getElementById('export-menu').classList.remove('show');
-    const exportStartDir = projectFolder || null;
-    const baseName = (projectName || 'presentation').replace(/\s+/g, '_');
-    const activeSlideBg = isDarkMode ? '#1e293b' : '#ffffff';
-
-    if (type === 'pdf') {
-        const exportContainer = document.getElementById('print-export-container');
-        exportContainer.innerHTML = '';
-        exportContainer.style.display = 'block';
-        exportContainer.style.position = 'absolute';
-        exportContainer.style.left = '-9999px';
-
-        slides.forEach((s) => {
-            const slideDiv = document.createElement('div');
-            slideDiv.className = 'print-slide';
-            slideDiv.style.width = `${slideWidth}px`;
-            slideDiv.style.height = `${slideHeight}px`;
-            slideDiv.style.position = 'relative';
-            slideDiv.style.background = activeSlideBg;
-            slideDiv.style.overflow = 'hidden';
-
-            s.elements.forEach(el => {
-                let style = `position: absolute; left:${el.x}px; top:${el.y}px; width:${el.width}px; height:${el.height}px; background-color:${el.bg}; border: ${el.borderWidth}px ${el.borderStyle} ${el.borderCol}; box-sizing: border-box;`;
-                if (el.type === 'text') {
-                    style += `font-size:${el.fontSize}px; font-family:${el.fontFamily}; color:${el.fontColor}; padding:8px;`;
-                    const tempDiv = document.createElement('div');
-                    tempDiv.style.cssText = style;
-                    renderKatexContent(tempDiv, el.content);
-                    slideDiv.appendChild(tempDiv);
-                } else {
-                    const shapeDiv = document.createElement('div');
-                    shapeDiv.style.cssText = style;
-                    slideDiv.appendChild(shapeDiv);
-                }
-            });
-            exportContainer.appendChild(slideDiv);
-        });
-
-        try {
-            const slideElements = exportContainer.querySelectorAll('.print-slide');
-            const imageDataList = [];
-
-            for (let slideEl of slideElements) {
-                const canvas = await html2canvas(slideEl, {scale: 2, useCORS: true, logging: false});
-                imageDataList.push(canvas.toDataURL('image/jpeg', 0.95));
-            }
-
-            exportContainer.style.display = 'none';
-
-            if (window.pywebview && window.pywebview.api) {
-                const res = await window.pywebview.api.save_pdf_from_images(imageDataList, `${baseName}.pdf`, exportStartDir);
-                if (res.success) {
-                    alert(`Successfully exported presentation to: ${res.path}`);
-                } else if (res.error !== "Cancelled") {
-                    alert(`Export failed: ${res.error}`);
-                }
-            }
-        } catch (err) {
-            exportContainer.style.display = 'none';
-            alert(`PDF Export error: ${err.message}`);
-        }
-        return;
-    }
-
+async function getExportHtmlString(forPdf = false) {
     let katexCss = '';
     try {
         const resp = await fetch('libs/katex.min.css');
@@ -1048,55 +1037,148 @@ async function triggerExport(type) {
         console.warn('Could not load KaTeX CSS for export:', e);
     }
 
+    const activeSlideBg = isDarkMode ? '#1e293b' : '#ffffff';
+
+    let slidesMarkup = '';
+    slides.forEach((s, idx) => {
+        const displayStyle = forPdf ? 'display: block; margin-bottom: 40px;' : '';
+        const positionStyle = forPdf ? 'position: relative;' : 'position: absolute;';
+        const slideStyle = `width: ${slideWidth}px; height: ${slideHeight}px; aspect-ratio: 16 / 9; background: ${activeSlideBg}; ${positionStyle} box-shadow: 0 25px 50px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden; ${displayStyle}`;
+
+        slidesMarkup += `<div class="slide ${!forPdf && idx === 0 ? 'active' : ''}" id="slide-${idx}" style="${slideStyle}">`;
+        s.elements.forEach(el => {
+            let style = `position: absolute; left:${el.x}px; top:${el.y}px; width:${el.width}px; height:${el.height}px; background-color:${el.bg}; border: ${el.borderWidth}px ${el.borderStyle} ${el.borderCol}; box-sizing: border-box;`;
+            if (el.type === 'text') {
+                style += `font-size:${el.fontSize}px; font-family:${el.fontFamily}; color:${el.fontColor}; padding:8px; display: flex; flex-direction: column; overflow: hidden;`;
+
+                const vAlign = el.verticalAlign || 'center';
+                if (vAlign === 'top') style += 'justify-content:flex-start;';
+                else if (vAlign === 'bottom') style += 'justify-content:flex-end;';
+                else style += 'justify-content:center;';
+
+                const hAlign = el.textAlign || 'center';
+                style += `text-align:${hAlign};`;
+                if (hAlign === 'left') style += 'align-items:flex-start;';
+                else if (hAlign === 'right') style += 'align-items:flex-end;';
+                else style += 'align-items:center;';
+
+                const tempDiv = document.createElement('div');
+                renderMarkdownAndKatex(tempDiv, el.content);
+                slidesMarkup += `<div class="el" style="${style}">${tempDiv.innerHTML}</div>`;
+            } else {
+                slidesMarkup += `<div class="el" style="${style}"></div>`;
+            }
+        });
+        slidesMarkup += `</div>`;
+    });
+
     let htmlContent = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>${escapeHtml(projectName || 'Presentation')}</title>
         <style>${katexCss}</style>
         <style>
             .katex .mathbb { font-family: 'KaTeX_Math', 'Times New Roman', serif !important; font-weight: bold; letter-spacing: 0.05em; }
-            body { background: #0f172a; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; overflow: hidden; }
-            .slide-wrapper { width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; position: relative; }
-            .slide { width: ${slideWidth}px; height: ${slideHeight}px; aspect-ratio: 16 / 9; background: ${activeSlideBg}; position: absolute; box-shadow: 0 25px 50px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden; display: none; }
+            body { background: #0f172a; display: flex; justify-content: center; align-items: center; ${forPdf ? 'height: auto;' : 'height: 100vh;'} margin: 0; font-family: sans-serif; overflow: hidden; }
+            .slide-wrapper { width: 100vw; ${forPdf ? 'height: auto;' : 'height: 100vh;'} display: flex; ${forPdf ? 'flex-direction: column;' : ''} justify-content: center; align-items: center; position: relative; }
+            .slide { display: none; }
             .slide.active { display: block; }
-            .el { position: absolute; box-sizing: border-box; }
             .katex-mathml { display: none !important; }
             .nav-hint { position: fixed; bottom: 20px; color: #94a3b8; font-size: 14px; pointer-events: none; z-index: 1000; }
         </style></head><body><div class="slide-wrapper">`;
 
-    slides.forEach((s, idx) => {
-        htmlContent += `<div class="slide ${idx === 0 ? 'active' : ''}" id="slide-${idx}">`;
-        s.elements.forEach(el => {
-            let style = `left:${el.x}px; top:${el.y}px; width:${el.width}px; height:${el.height}px; background-color:${el.bg}; border: ${el.borderWidth}px ${el.borderStyle} ${el.borderCol};`;
-            if (el.type === 'text') {
-                style += `font-size:${el.fontSize}px; font-family:${el.fontFamily}; color:${el.fontColor}; padding:8px;`;
-                const tempDiv = document.createElement('div');
-                renderKatexContent(tempDiv, el.content);
-                htmlContent += `<div class="el" style="${style}">${tempDiv.innerHTML}</div>`;
-            } else {
-                htmlContent += `<div class="el" style="${style}"></div>`;
-            }
-        });
-        htmlContent += `</div>`;
-    });
+    htmlContent += slidesMarkup;
 
-    htmlContent += `</div><div class="nav-hint">Use [Space] or [→] to go forward, [←] to go backward</div>`;
-    htmlContent += `<script>
-            let current = 0;
-            const total = ${slides.length};
-            document.addEventListener('keydown', (e) => {
-                if (e.code === 'Space' || e.code === 'ArrowRight') {
-                    if (current < total - 1) {
-                        document.getElementById('slide-' + current).classList.remove('active');
-                        current++;
-                        document.getElementById('slide-' + current).classList.add('active');
+    if (!forPdf) {
+        htmlContent += `</div><div class="nav-hint">Use [Space] or [→] to go forward, [←] to go backward</div>`;
+        htmlContent += `<script>
+                let current = 0;
+                const total = ${slides.length};
+                document.addEventListener('keydown', (e) => {
+                    if (e.code === 'Space' || e.code === 'ArrowRight') {
+                        if (current < total - 1) {
+                            document.getElementById('slide-' + current).classList.remove('active');
+                            current++;
+                            document.getElementById('slide-' + current).classList.add('active');
+                        }
+                    } else if (e.code === 'ArrowLeft') {
+                        if (current > 0) {
+                            document.getElementById('slide-' + current).classList.remove('active');
+                            current--;
+                            document.getElementById('slide-' + current).classList.add('active');
+                        }
                     }
-                } else if (e.code === 'ArrowLeft') {
-                    if (current > 0) {
-                        document.getElementById('slide-' + current).classList.remove('active');
-                        current--;
-                        document.getElementById('slide-' + current).classList.add('active');
-                    }
+                });
+            <\/script>`;
+    } else {
+        htmlContent += `</div>`;
+    }
+
+    htmlContent += `</body></html>`;
+    return htmlContent;
+}
+
+async function triggerExport(type) {
+    document.getElementById('export-menu').classList.remove('show');
+    const exportStartDir = projectFolder || null;
+    const baseName = (projectName || 'presentation').replace(/\s+/g, '_');
+
+    if (type === 'pdf') {
+        const exportContainer = document.getElementById('print-export-container');
+        exportContainer.innerHTML = '';
+        exportContainer.style.display = 'block';
+        exportContainer.style.position = 'absolute';
+        exportContainer.style.left = '-9999px';
+        exportContainer.style.width = `${slideWidth}px`;
+
+        // Generate markup with forPdf = true so html2canvas can see and snap all slides
+        const fullHtmlForPdf = await getExportHtmlString(true);
+        exportContainer.innerHTML = fullHtmlForPdf;
+
+        try {
+            await document.fonts.ready;
+            await new Promise(resolve => setTimeout(resolve, 800));
+
+            const slideElements = exportContainer.querySelectorAll('.slide');
+            const imageDataList = [];
+
+            for (let slideEl of slideElements) {
+                const canvas = await html2canvas(slideEl, {
+                    scale: 2,
+                    useCORS: true,
+                    logging: false,
+                    windowWidth: slideWidth,
+                    windowHeight: slideHeight
+                });
+                imageDataList.push(canvas.toDataURL('image/jpeg', 0.95));
+            }
+
+            exportContainer.style.display = 'none';
+
+            if (window.pywebview && window.pywebview.api) {
+                const pdfRes = await window.pywebview.api.save_pdf_from_images(imageDataList, `${baseName}.pdf`, exportStartDir);
+                if (!pdfRes.success) {
+                    if (pdfRes.error !== "Cancelled") alert(`PDF Export failed: ${pdfRes.error}`);
+                    return;
                 }
-            });
-        <\/script></body></html>`;
+
+                // Automatically save the companion HTML file using the inferred path from the saved PDF
+                const pdfPath = pdfRes.path;
+                const folderPath = pdfPath.substring(0, Math.max(pdfPath.lastIndexOf('/'), pdfPath.lastIndexOf('\\')));
+                const fileNameBase = pdfPath.substring(Math.max(pdfPath.lastIndexOf('/'), pdfPath.lastIndexOf('\\')) + 1).replace(/\.[^/.]+$/, '');
+                const htmlFilename = fileNameBase + '.html';
+
+                const htmlContent = await getExportHtmlString(false); // Clean interactive version for HTML export
+                await window.pywebview.api.save_text_file(folderPath, htmlFilename, htmlContent);
+
+                alert(`Successfully exported PDF and inferred HTML to:\n${pdfPath}`);
+            }
+        } catch (err) {
+            exportContainer.style.display = 'none';
+            alert(`PDF Export error: ${err.message}`);
+        }
+        return;
+    }
+
+    // Standard Interactive HTML Export (arrow keys fully functional)
+    const htmlContent = await getExportHtmlString(false);
 
     if (window.pywebview && window.pywebview.api) {
         const res = await window.pywebview.api.save_file(htmlContent, `${baseName}.html`, "html", exportStartDir);
