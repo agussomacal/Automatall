@@ -1339,4 +1339,54 @@ function escapeHtml(s) {
     return String(s).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 }
 
-renderRecents();
+async function addRecent(name, path) {
+    recents = recents.filter(r => r.path !== path);
+    recents.unshift({name, path});
+    recents = recents.slice(0, 10);
+    renderRecents();
+
+    if (window.pywebview && window.pywebview.api) {
+        await window.pywebview.api.add_recent_project(name, path);
+    }
+}
+
+function renderRecents() {
+    const ul = document.getElementById('project-list');
+    if (!ul) return;
+    ul.innerHTML = '';
+    recents.forEach(r => {
+        const li = document.createElement('li');
+        li.className = 'project-item';
+        li.innerHTML = `<span>${r.name}</span><span style="font-size: 10px; opacity: 0.6; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${r.path}</span>`;
+        li.onclick = () => openProjectByPath(r.path);
+        ul.appendChild(li);
+    });
+    if (recents.length === 0) {
+        ul.innerHTML = '<li class="project-item" style="cursor: default;">No projects found on disk</li>';
+    }
+}
+
+async function initRecents() {
+    if (window.pywebview && window.pywebview.api) {
+        try {
+            const res = await window.pywebview.api.get_recent_projects();
+            if (res.success && Array.isArray(res.projects)) {
+                recents = res.projects;
+            }
+        } catch (e) {
+            console.error("Could not load recent projects:", e);
+        }
+    }
+    renderRecents();
+}
+
+// Call initRecents on startup instead of plain renderRecents
+// Listen for pywebview to be ready before calling Python API methods
+window.addEventListener('pywebviewready', () => {
+    initRecents();
+});
+
+// Fallback in case it's loaded in a standard browser preview where pywebviewready doesn't fire
+if (!window.pywebview) {
+    renderRecents();
+}

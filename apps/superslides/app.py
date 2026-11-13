@@ -260,6 +260,53 @@ class Api:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def get_recent_projects(self):
+        """Load recent projects from recents.json and filter out deleted/non-existent paths."""
+        recents_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recents.json")
+        if not os.path.exists(recents_file):
+            return {"success": True, "projects": []}
+        try:
+            with open(recents_file, "r", encoding="utf-8") as f:
+                projects = json.load(f)
+
+            # Safely check if path exists for each dictionary entry
+            valid = []
+            for p in projects:
+                if isinstance(p, dict):
+                    path = p.get("path")
+                    if path and os.path.exists(path):
+                        valid.append(p)
+
+            # Save the cleaned list back
+            with open(recents_file, "w", encoding="utf-8") as f:
+                json.dump(valid, f, indent=2)
+            return {"success": True, "projects": valid}
+        except Exception as e:
+            return {"success": False, "error": str(e), "projects": []}
+
+    def add_recent_project(self, name, path):
+        """Add or update a project in recents.json."""
+        recents_file = os.path.join(os.path.dirname(os.path.abspath(__file__)), "recents.json")
+        projects = []
+        try:
+            if os.path.exists(recents_file):
+                with open(recents_file, "r", encoding="utf-8") as f:
+                    projects = json.load(f)
+        except Exception:
+            projects = []
+
+        # Remove existing entry with same path to avoid duplicates
+        projects = [p for p in projects if isinstance(p, dict) and p.get("path") != path]
+        projects.insert(0, {"name": name, "path": path})
+        projects = projects[:10]  # Keep up to 10 recent projects
+
+        try:
+            with open(recents_file, "w", encoding="utf-8") as f:
+                json.dump(projects, f, indent=2)
+            return {"success": True}
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
 
 if __name__ == '__main__':
     check_and_install_dependencies()
