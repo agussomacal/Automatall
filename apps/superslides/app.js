@@ -7,6 +7,7 @@ let gridSize = 20;
 let isDarkMode = false;
 
 let elementClipboard = null;
+let slideClipboard = null;
 
 let rawTexMacros = `\\usepackage{amssymb}
 \\usepackage{amsfonts}
@@ -1618,26 +1619,41 @@ window.addEventListener('keydown', (e) => {
     const isEditing = activeEl && (activeEl.contentEditable === 'true' || activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
 
     // 1. Delete / Backspace
-    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedElementIndex !== null) {
+    if ((e.key === 'Delete' || e.key === 'Backspace')) {
         if (isEditing) return;
-        const currentSlide = slides[currentSlideIndex];
-        if (currentSlide && currentSlide.elements[selectedElementIndex]) {
-            currentSlide.elements.splice(selectedElementIndex, 1);
-            selectedElementIndex = null;
-            markDirty();
-            renderEditor();
-            e.preventDefault();
+
+        // If an element is selected on the canvas, delete the element
+        if (selectedElementIndex !== null) {
+            const currentSlide = slides[currentSlideIndex];
+            if (currentSlide && currentSlide.elements[selectedElementIndex]) {
+                currentSlide.elements.splice(selectedElementIndex, 1);
+                selectedElementIndex = null;
+                markDirty();
+                renderEditor();
+                e.preventDefault();
+            }
         }
     }
 
     // 2. Copy (Ctrl + C / Cmd + C)
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
         if (isEditing) return;
+
         if (selectedElementIndex !== null) {
+            // Copy selected element
             const currentSlide = slides[currentSlideIndex];
             if (currentSlide && currentSlide.elements[selectedElementIndex]) {
-                // Deep copy the selected element into our internal clipboard
                 elementClipboard = JSON.parse(JSON.stringify(currentSlide.elements[selectedElementIndex]));
+                slideClipboard = null; // Clear slide clipboard if copying element
+                e.preventDefault();
+            }
+        } else {
+            // Copy current active slide if no canvas element is selected
+            const currentSlide = slides[currentSlideIndex];
+            if (currentSlide) {
+                slideClipboard = JSON.parse(JSON.stringify(currentSlide));
+                elementClipboard = null; // Clear element clipboard if copying slide
+                flashSaveIndicator('Slide copied ✓');
                 e.preventDefault();
             }
         }
@@ -1646,22 +1662,37 @@ window.addEventListener('keydown', (e) => {
     // 3. Paste (Ctrl + V / Cmd + V)
     if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
         if (isEditing) return;
+
+        // Prioritize pasting element if element clipboard has content AND an element is selected or we're on canvas
         if (elementClipboard) {
             const currentSlide = slides[currentSlideIndex];
             if (currentSlide) {
-                // Deep copy from clipboard to avoid reference linkage
                 const newEl = JSON.parse(JSON.stringify(elementClipboard));
-
-                // Shift slightly diagonally so the user can easily see the new duplicate
                 newEl.x += 40;
                 newEl.y += 40;
-
                 currentSlide.elements.push(newEl);
                 selectedElementIndex = currentSlide.elements.length - 1;
                 markDirty();
                 renderEditor();
                 e.preventDefault();
             }
+        } else if (slideClipboard) {
+            // Paste slide immediately after the current active slide
+            const newSlide = JSON.parse(JSON.stringify(slideClipboard));
+
+            // Give the new slide a unique title/id or suffix
+            newSlide.id = slides.length + 1;
+            newSlide.title = `${slideClipboard.title} (Copy)`;
+
+            // Insert right after currentSlideIndex
+            slides.splice(currentSlideIndex + 1, 0, newSlide);
+            currentSlideIndex++; // Switch focus to the newly pasted slide
+            selectedElementIndex = null;
+
+            markDirty();
+            renderEditor();
+            flashSaveIndicator('Slide pasted ✓');
+            e.preventDefault();
         }
     }
 });
