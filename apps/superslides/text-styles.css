@@ -1,0 +1,103 @@
+/* ==========================================================================
+   Dedicated Text, Markdown, List, and KaTeX Styles
+   ==================================================================---------
+   Alignment contract (edit mode and rendered mode behave the same):
+   - Vertical alignment: the flex container (.element-text) handles it via
+     justify-content — block children stack in flow.
+   - Horizontal alignment: handled by text-align on .element-text, which
+     every child must ALLOW TO INHERIT. No child may force its own
+     centering (no display:inline-block + margin:auto, no
+     text-align:center !important on full-width blocks).
+   ========================================================================== */
+
+.element-text {
+    padding: 12px;
+    outline: none;
+    border-radius: 4px;
+    word-break: break-word;
+    cursor: text;
+    overflow: visible;
+    line-height: 1.15;
+
+    /* Flex container for the text box.
+       NOTE: no white-space: pre-wrap here — it preserves newlines in the
+       generated markup as phantom anonymous flex items, which breaks
+       justify-content: flex-end (content floats above an invisible line). */
+    display: flex;
+    flex-direction: column;
+}
+
+/* LISTS: plain blocks following the box's text-align.
+   Markers: left-aligned and centered boxes keep the classic outside
+   gutter; right-aligned boxes switch to inside markers so the bullet
+   travels with the text to the right edge. */
+.element-text ul,
+.element-text ol {
+    margin: 0;
+    padding-left: 1.4em;
+    text-align: inherit;
+}
+
+.element-text.align-right ul,
+.element-text.align-right ol {
+    list-style-position: inside;
+    padding-left: 0;
+}
+
+/* All direct children flow as normal blocks inside the flex column.
+   Blocks stretch to full row width, so text-align governs their content. */
+.element-text > * {
+    margin: 0;
+    max-width: 100%;
+}
+
+.element-text p {
+    margin: 0;
+    line-height: inherit;
+    text-align: inherit;
+}
+
+.element-text ul li,
+.element-text ol li {
+    text-align: inherit;
+}
+
+.element-text li {
+    margin-bottom: 0;
+}
+
+/* DISPLAY EQUATIONS: full-width blocks whose inline content inherits the
+   box's text-align — centered when the box is centered, left when left,
+   right when right. (KaTeX's own stylesheet centers .katex-display by
+   default, so we must explicitly revert to inheritance here.) */
+.element-text .katex-display,
+.slide .katex-display {
+    text-align: inherit;
+    display: block;
+    margin: 0.5em 0;
+    width: auto;
+    max-width: 100%;
+}
+
+/* INLINE math spans simply follow surrounding text — no rules needed. */
+
+.katex-mathml {
+    display: none !important;
+}
+
+/* Display equations: KaTeX's own stylesheet re-centers the inner
+   .katex span (.katex-display > .katex { text-align: center }).
+   Revert that too, so the equation follows the box's alignment. */
+.element-text .katex-display > .katex,
+.slide .katex-display > .katex {
+    text-align: inherit;
+}
+
+/* CENTERED lists: shrink to content and center as a unit, so the
+   markers hug the centered text (PowerPoint-style) instead of sitting
+   in a left gutter. Scoped to .align-center only. */
+.element-text.align-center ul,
+.element-text.align-center ol {
+    width: fit-content;
+    margin: 0 auto;
+}

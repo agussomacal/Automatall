@@ -576,11 +576,8 @@ function renderMarkdownAndKatex(element, rawText) {
     let html = rawText || '';
     if (window.marked && typeof window.marked.parse === 'function') {
         try {
-            // Enable line breaks so Enter/Intro isn't ignored
-            if (typeof window.marked.setOptions === 'function') {
-                window.marked.setOptions({ breaks: true, gfm: true });
-            }
-            html = window.marked.parse(rawText || '');
+            // Pass breaks: true directly so single newlines convert to <br> consistently
+            html = window.marked.parse(rawText || '', {breaks: true, gfm: true});
         } catch (e) {
             console.error("Markdown parsing error:", e);
         }
@@ -617,25 +614,64 @@ function scheduleLiveUpdate(el, text) {
     liveUpdateTimer = setTimeout(updateThumbnailLive, 250);
 }
 
-function applyAlignmentStyles(domEl, el) {
-    if (el.type !== 'text') return;
+// ------------------------------------------------------------------
+// SINGLE SOURCE OF TRUTH for alignment.
+// The editor (applyAlignmentStyles), the HTML export
+// (getExportHtmlString) and the PDF raster fallback
+// (slideMarkupForPdf) all derive from these three helpers.
+// ------------------------------------------------------------------
 
-    // Vertical alignment
-    const vAlign = el.verticalAlign || 'center';
-    if (vAlign === 'top') domEl.style.justifyContent = 'flex-start';
-    else if (vAlign === 'bottom') domEl.style.justifyContent = 'flex-end';
-    else domEl.style.justifyContent = 'center';
+function getHAlign(el) {
+    return el.textAlign || 'center';
+}
 
-    // Horizontal alignment
-    const hAlign = el.textAlign || 'center';
-    domEl.style.textAlign = hAlign;
-    if (hAlign === 'left') {
-        domEl.style.alignItems = 'flex-start';
-    } else if (hAlign === 'right') {
-        domEl.style.alignItems = 'flex-end';
-    } else {
-        domEl.style.alignItems = 'center';
+function getVJustify(el) {
+    switch (el.verticalAlign || 'center') {
+        case 'top':
+            return 'flex-start';
+        case 'bottom':
+            return 'flex-end';
+        default:
+            return 'center';
     }
+}
+
+// Inline style shared by every text element in every context.
+// Per-element geometry/looks only — structural markup styling
+// (padding, lists, equations) lives in text-styles.css, which is
+// linked in index.html and embedded in every export.
+function textElementSharedStyle(el) {
+    return `font-size:${el.fontSize}px; font-family:${el.fontFamily}; color:${el.fontColor};`
+        + `display:flex; flex-direction:column;`
+        + `justify-content:${getVJustify(el)};`
+        + `text-align:${getHAlign(el)};`;
+}
+
+// Class hook for text-styles.css to adapt lists per alignment.
+function textElementClass(el) {
+    return `element-text align-${getHAlign(el)}`;
+}
+
+
+// ------------------------------------------------------------------
+// EDITOR (canvas + thumbnails)
+// ------------------------------------------------------------------
+function applyAlignmentStyles(domEl, el) {
+    // Horizontal alignment: text-align only. Lists, paragraphs and
+    // .katex-display equations inherit it via text-styles.css.
+    // Do NOT set align-items — on a flex column it shrink-wraps
+    // children and re-introduces box centering for lists/equations.
+    domEl.style.textAlign = getHAlign(el);
+
+    // Class hook so CSS can adapt (e.g. inside markers on the right,
+    // fit-content centering for centered lists). No stale classes.
+    domEl.classList.remove('align-left', 'align-center', 'align-right');
+    domEl.classList.add('align-' + getHAlign(el));
+
+    // Vertical alignment via flex on the container.
+    domEl.style.display = 'flex';
+    domEl.style.flexDirection = 'column';
+    domEl.style.justifyContent = getVJustify(el);
 }
 
 function renderEditor() {
@@ -1161,6 +1197,9 @@ function updateProp(propName, value) {
     updateThumbnailLive();
 }
 
+// ------------------------------------------------------------------
+// HTML EXPORT — full function
+// ------------------------------------------------------------------
 async function getExportHtmlString() {
     let katexCss = '';
     try {
@@ -1172,40 +1211,39 @@ async function getExportHtmlString() {
         console.warn('Could not load KaTeX CSS for export:', e);
     }
 
+    // Our dedicated text/list/equation styles — same file the editor
+    // uses, so the viewer matches the canvas by construction.
+    let textStyles = '';
+    try {
+        const resp = await fetch('text-styles.css');
+        textStyles = await resp.text();
+    } catch (e) {
+        console.warn('Could not load text-styles.css for export:', e);
+    }
+
     const activeSlideBg = isDarkMode ? '#1e293b' : '#ffffff';
 
     let slidesMarkup = '';
     slides.forEach((s, idx) => {
-        const slideStyle = `width: ${slideWidth}px; height: ${slideHeight}px; aspect-ratio: 16 / 9; background: ${activeSlideBg}; position: absolute; box-shadow: 0 25px 50px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden;`;
+        const slideStyle = `width: ${slideWidth}px; height: ${slideHeight}px; background: ${activeSlideBg}; position: absolute; box-shadow: 0 25px 50px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden;`;
 
         slidesMarkup += `<div class="slide ${idx === 0 ? 'active' : ''}" id="slide-${idx}" style="${slideStyle}">`;
         s.elements.forEach(el => {
-            let style = `position: absolute; left:${el.x}px; top:${el.y}px; width:${el.width}px; height:${el.height}px; background-color:${el.bg}; border: ${el.borderWidth}px ${el.borderStyle} ${el.borderCol}; box-sizing: border-box;`;
+            const geo = `position: absolute; left:${el.x}px; top:${el.y}px; width:${el.width}px; height:${el.height}px; background-color:${el.bg}; border: ${el.borderWidth}px ${el.borderStyle} ${el.borderCol}; box-sizing: border-box;`;
+
             if (el.type === 'text') {
-                style += `font-size:${el.fontSize}px; font-family:${el.fontFamily}; color:${el.fontColor}; padding:8px; display: flex; flex-direction: column; overflow: hidden;`;
-
-                const vAlign = el.verticalAlign || 'center';
-                if (vAlign === 'top') style += 'justify-content:flex-start;';
-                else if (vAlign === 'bottom') style += 'justify-content:flex-end;';
-                else style += 'justify-content:center;';
-
-                const hAlign = el.textAlign || 'center';
-                style += `text-align:${hAlign};`;
-                if (hAlign === 'left') style += 'align-items:flex-start;';
-                else if (hAlign === 'right') style += 'align-items:flex-end;';
-                else style += 'align-items:center;';
-
-                const tempDiv = document.createElement('div');
-                renderMarkdownAndKatex(tempDiv, el.content);
-                slidesMarkup += `<div class="el" style="${style}">${tempDiv.innerHTML}</div>`;
+                // Shared style + shared class. No duplicated alignment code.
+                slidesMarkup += `<div class="el ${textElementClass(el)}" style="${geo} ${textElementSharedStyle(el)}">`
+                    + renderMarkdownAndKatexToString(el)
+                    + `</div>`;
             } else if (el.type === 'figure') {
                 if (el.src) {
-                    slidesMarkup += `<div class="el" style="${style}"><img src="${el.src}" style="width:100%; height:100%; object-fit:contain;" /></div>`;
+                    slidesMarkup += `<div class="el" style="${geo}"><img src="${el.src}" style="width:100%; height:100%; object-fit:contain;" /></div>`;
                 } else {
-                    slidesMarkup += `<div class="el" style="${style} display:flex; align-items:center; justify-content:center; color:#94a3b8; font-family:sans-serif;">[Figure Placeholder]</div>`;
+                    slidesMarkup += `<div class="el" style="${geo} display:flex; align-items:center; justify-content:center; color:#94a3b8; font-family:sans-serif;">[Figure Placeholder]</div>`;
                 }
             } else {
-                slidesMarkup += `<div class="el" style="${style}"></div>`;
+                slidesMarkup += `<div class="el" style="${geo}"></div>`;
             }
         });
         slidesMarkup += `</div>`;
@@ -1213,50 +1251,22 @@ async function getExportHtmlString() {
 
     let htmlContent = `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>${escapeHtml(projectName || 'Presentation')}</title>
         <style>${katexCss}</style>
+        <style>${textStyles}</style>
         <style>
             .katex .mathbb { font-family: 'KaTeX_Math', 'Times New Roman', serif !important; font-weight: bold; letter-spacing: 0.05em; }
             body { background: #0f172a; display: flex; justify-content: center; align-items: center; height: 100vh; margin: 0; font-family: sans-serif; overflow: hidden; }
             .slide-wrapper { width: 100vw; height: 100vh; display: flex; justify-content: center; align-items: center; position: relative; }
             .slide { display: none; }
             .slide.active { display: block; }
-            .katex-mathml { display: none !important; }
             .nav-hint { position: fixed; bottom: 20px; color: #94a3b8; font-size: 14px; pointer-events: none; z-index: 1000; }
 
-            /* ---- Print: one page per slide, page size == slide size ---- */
-            @page {
-                size: ${slideWidth}px ${slideHeight}px;
-                margin: 0;
-            }
+            @page { size: ${slideWidth}px ${slideHeight}px; margin: 0; }
             @media print {
-                body {
-                    height: auto;
-                    display: block;
-                    background: #ffffff;
-                }
-                .slide-wrapper {
-                    width: auto;
-                    height: auto;
-                    display: block;
-                    position: static;
-                }
-                .slide {
-                    display: block !important;
-                    position: relative !important;   /* ← overrides the inline absolute */
-                    left: 0 !important;
-                    top: 0 !important;
-                    margin: 0 !important;
-                    box-shadow: none !important;
-                    border-radius: 0 !important;
-                    page-break-after: always;
-                    break-after: page;
-                }
-                .slide:last-child {
-                    page-break-after: auto;
-                    break-after: auto;
-                }
-                .nav-hint {
-                    display: none;
-                }
+                body { height: auto; display: block; background: #ffffff; }
+                .slide-wrapper { width: auto; height: auto; display: block; position: static; }
+                .slide { display: block !important; position: relative !important; left: 0 !important; top: 0 !important; margin: 0 !important; box-shadow: none !important; border-radius: 0 !important; page-break-after: always; break-after: page; }
+                .slide:last-child { page-break-after: auto; break-after: auto; }
+                .nav-hint { display: none; }
             }
         </style></head><body><div class="slide-wrapper">`;
 
@@ -1283,6 +1293,46 @@ async function getExportHtmlString() {
         <\/script></body></html>`;
 
     return htmlContent;
+}
+
+// Render content into a detached div and return its HTML string.
+// One wrapper around renderMarkdownAndKatex used by both exports.
+function renderMarkdownAndKatexToString(el) {
+    const tempDiv = document.createElement('div');
+    renderMarkdownAndKatex(tempDiv, el.content);
+    return tempDiv.innerHTML;
+}
+
+
+// ------------------------------------------------------------------
+// PDF RASTER FALLBACK — full function
+// (figures were previously appended to the HTML-export variable;
+//  that bug is fixed here too)
+// ------------------------------------------------------------------
+function slideMarkupForPdf(s, idx) {
+    const activeSlideBg = isDarkMode ? '#1e293b' : '#ffffff';
+    const slideStyle = `width: ${slideWidth}px; height: ${slideHeight}px; background: ${activeSlideBg}; position: relative; box-shadow: 0 25px 50px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden;`;
+
+    let markup = `<div class="slide" style="${slideStyle}">`;
+    s.elements.forEach(el => {
+        const geo = `position: absolute; left:${el.x}px; top:${el.y}px; width:${el.width}px; height:${el.height}px; background-color:${el.bg}; border: ${el.borderWidth}px ${el.borderStyle} ${el.borderCol}; box-sizing: border-box;`;
+
+        if (el.type === 'text') {
+            markup += `<div class="el ${textElementClass(el)}" style="${geo} ${textElementSharedStyle(el)}">`
+                + renderMarkdownAndKatexToString(el)
+                + `</div>`;
+        } else if (el.type === 'figure') {
+            if (el.src) {
+                markup += `<div class="el" style="${geo}"><img src="${el.src}" style="width:100%; height:100%; object-fit:contain;" /></div>`;
+            } else {
+                markup += `<div class="el" style="${geo} display:flex; align-items:center; justify-content:center; color:#94a3b8; font-family:sans-serif;">[Figure Placeholder]</div>`;
+            }
+        } else {
+            markup += `<div class="el" style="${geo}"></div>`;
+        }
+    });
+    markup += `</div>`;
+    return markup;
 }
 
 // =====================================================================
@@ -1343,43 +1393,6 @@ function getEmbeddedKatexCss() {
     return _embeddedKatexCssPromise;
 }
 
-function slideMarkupForPdf(s, idx) {
-    const activeSlideBg = isDarkMode ? '#1e293b' : '#ffffff';
-    const slideStyle = `width: ${slideWidth}px; height: ${slideHeight}px; background: ${activeSlideBg}; position: relative; box-shadow: 0 25px 50px rgba(0,0,0,0.5); border-radius: 4px; overflow: hidden;`;
-
-    let markup = `<div class="slide" style="${slideStyle}">`;
-    s.elements.forEach(el => {
-        let style = `position: absolute; left:${el.x}px; top:${el.y}px; width:${el.width}px; height:${el.height}px; background-color:${el.bg}; border: ${el.borderWidth}px ${el.borderStyle} ${el.borderCol}; box-sizing: border-box;`;
-        if (el.type === 'text') {
-            style += `font-size:${el.fontSize}px; font-family:${el.fontFamily}; color:${el.fontColor}; padding:8px; display: flex; flex-direction: column; overflow: hidden;`;
-
-            const vAlign = el.verticalAlign || 'center';
-            if (vAlign === 'top') style += 'justify-content:flex-start;';
-            else if (vAlign === 'bottom') style += 'justify-content:flex-end;';
-            else style += 'justify-content:center;';
-
-            const hAlign = el.textAlign || 'center';
-            style += `text-align:${hAlign};`;
-            if (hAlign === 'left') style += 'align-items:flex-start;';
-            else if (hAlign === 'right') style += 'align-items:flex-end;';
-            else style += 'align-items:center;';
-
-            const tempDiv = document.createElement('div');
-            renderMarkdownAndKatex(tempDiv, el.content);
-            markup += `<div class="el" style="${style}">${tempDiv.innerHTML}</div>`;
-        } else if (el.type === 'figure') {
-            if (el.src) {
-                slidesMarkup += `<div class="el" style="${style}"><img src="${el.src}" style="width:100%; height:100%; object-fit:contain;" /></div>`;
-            } else {
-                slidesMarkup += `<div class="el" style="${style} display:flex; align-items:center; justify-content:center; color:#94a3b8; font-family:sans-serif;">[Figure Placeholder]</div>`;
-            }
-        } else {
-            markup += `<div class="el" style="${style}"></div>`;
-        }
-    });
-    markup += `</div>`;
-    return markup;
-}
 
 function rasterizeSlide(markup, embeddedCss, scale) {
     return new Promise((resolve, reject) => {

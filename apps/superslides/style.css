@@ -474,10 +474,6 @@ body {
     transition: background-color 0.2s, color 0.2s;
 }
 
-.katex-mathml {
-    display: none !important;
-}
-
 .canvas-element {
     position: absolute;
     user-select: none;
@@ -487,17 +483,6 @@ body {
 .canvas-element.selected {
     outline: 2px solid var(--accent-color);
     outline-offset: 2px;
-}
-
-.element-text {
-    padding: 8px;
-    outline: none;
-    border-radius: 4px;
-    word-break: break-word;
-    cursor: text;
-    display: flex;
-    flex-direction: column;
-    overflow: hidden;
 }
 
 .element-shape {
