@@ -499,13 +499,14 @@ function addElement(type) {
         type: type,
         x: Math.round(200 + (currentSlide.elements.length * 30)),
         y: Math.round(200 + (currentSlide.elements.length * 30)),
-        width: type === 'text' ? Math.round(600 * scaleFactor) : Math.round(350 * scaleFactor),
-        height: type === 'text' ? Math.round(150 * scaleFactor) : Math.round(200 * scaleFactor),
+        width: type === 'text' ? Math.round(600 * scaleFactor) : Math.round(400 * scaleFactor),
+        height: type === 'text' ? Math.round(150 * scaleFactor) : Math.round(300 * scaleFactor),
         content: type === 'text' ? 'Type **markdown** or math like $x^2 + y^2 = r^2$' : '',
-        bg: type === 'text' ? 'transparent' : (isDarkMode ? '#334155' : '#cbd5e1'),
-        borderCol: type === 'text' ? 'transparent' : (isDarkMode ? '#64748b' : '#475569'),
+        src: type === 'figure' ? '' : undefined,
+        bg: type === 'text' ? 'transparent' : (type === 'figure' ? (isDarkMode ? '#1e293b' : '#f1f5f9') : (isDarkMode ? '#334155' : '#cbd5e1')),
+        borderCol: type === 'text' ? 'transparent' : (type === 'figure' ? (isDarkMode ? '#475569' : '#cbd5e1') : (isDarkMode ? '#64748b' : '#475569')),
         borderWidth: type === 'text' ? 0 : 2,
-        borderStyle: 'solid',
+        borderStyle: type === 'figure' ? 'dashed' : 'solid',
         fontSize: Math.round(32 * scaleFactor),
         fontFamily: 'sans-serif',
         fontColor: isDarkMode ? '#f8fafc' : '#0f172a',
@@ -518,10 +519,67 @@ function addElement(type) {
     renderEditor();
 }
 
+async function browseFigurePath(elementIndex) {
+    if (window.pywebview && window.pywebview.api) {
+        const res = await window.pywebview.api.select_figure_file();
+        if (res.success && res.path) {
+            processAndAssignFigure(elementIndex, res.path);
+        }
+    } else {
+        const path = prompt("Enter path or URL to figure:");
+        if (path) assignFigureSource(elementIndex, path, path);
+    }
+}
+
+async function processAndAssignFigure(elementIndex, filePath) {
+    if (window.pywebview && window.pywebview.api && projectFolder) {
+        const res = await window.pywebview.api.import_figure(projectFolder, filePath);
+        if (res.success) {
+            assignFigureSource(elementIndex, res.data_uri, res.relative_path);
+            return;
+        }
+    }
+    assignFigureSource(elementIndex, filePath, filePath);
+}
+
+function handleFigureDrop(e, elIndex) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (e.dataTransfer && e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+        const file = e.dataTransfer.files[0];
+        const filePath = file.path; // Absolute file path from file system drop
+        if (filePath) {
+            processAndAssignFigure(elIndex, filePath);
+        } else {
+            const blobUrl = URL.createObjectURL(file);
+            assignFigureSource(elIndex, blobUrl, file.name);
+        }
+    }
+}
+
+function assignFigureSource(elementIndex, dataUri, storedPath) {
+    const currentSlide = slides[currentSlideIndex];
+    if (!currentSlide || !currentSlide.elements[elementIndex]) return;
+
+    const el = currentSlide.elements[elementIndex];
+    el.src = dataUri;
+    el.filePath = storedPath;
+    el.borderStyle = 'solid';
+    markDirty();
+    renderCanvas();
+    renderPropertiesPanel();
+    updateThumbnailLive();
+}
+
+
 function renderMarkdownAndKatex(element, rawText) {
     let html = rawText || '';
     if (window.marked && typeof window.marked.parse === 'function') {
         try {
+            // Enable line breaks so Enter/Intro isn't ignored
+            if (typeof window.marked.setOptions === 'function') {
+                window.marked.setOptions({ breaks: true, gfm: true });
+            }
             html = window.marked.parse(rawText || '');
         } catch (e) {
             console.error("Markdown parsing error:", e);
@@ -643,7 +701,35 @@ function buildThumbElement(el) {
         applyAlignmentStyles(thumbEl, el);
         renderMarkdownAndKatex(thumbEl, el.content);
     }
+
+    // Inside renderCanvas() element loop:
+    if (el.type === 'figure') {
+        thumbEl.style.display = 'flex';
+        thumbEl.style.flexDirection = 'column';
+        thumbEl.style.alignItems = 'center';
+        thumbEl.style.justifyContent = 'center';
+        thumbEl.style.overflow = 'hidden';
+
+        if (el.src) {
+            thumbEl.innerHTML = `<img src="${el.src}" style="width: 100%; height: 100%; object-fit: contain; pointer-events: none;" />`;
+        } else {
+            thumbEl.innerHTML = `
+            <div style="text-align: center; pointer-events: none; padding: 10px;">
+                <span style="font-size: 28px; display: block; margin-bottom: 6px;">🖼️</span>
+                <span style="font-size: 13px; font-weight: 500; color: var(--text-muted);">Drop / Browse Figure</span>
+            </div>`;
+            thumbEl.onclick = () => browseFigurePath(elIndex);
+        }
+
+        thumbEl.ondragover = (e) => {
+            e.preventDefault();
+            e.stopPropagation();
+        };
+        thumbEl.ondrop = (e) => handleFigureDrop(e, elIndex);
+    }
     return thumbEl;
+
+
 }
 
 function getGridSvgDataUri(width, height, gridSize, isDarkMode) {
@@ -706,20 +792,63 @@ function renderCanvas() {
         domEl.style.borderWidth = `${el.borderWidth}px`;
         domEl.style.borderStyle = el.borderStyle;
 
+        if (el.type === 'figure') {
+            domEl.style.display = 'flex';
+            domEl.style.flexDirection = 'column';
+            domEl.style.alignItems = 'center';
+            domEl.style.justifyContent = 'center';
+            domEl.style.overflow = 'hidden';
+
+            if (el.src) {
+                domEl.innerHTML = `<img src="${el.src}" style="width: 100%; height: 100%; object-fit: contain; pointer-events: none;" />`;
+            } else {
+                domEl.innerHTML = `
+                    <div style="text-align: center; pointer-events: none; padding: 10px;">
+                        <span style="font-size: 28px; display: block; margin-bottom: 6px;">🖼️</span>
+                        <span style="font-size: 13px; font-weight: 500; color: var(--text-muted);">Drop / Browse Figure</span>
+                    </div>`;
+                domEl.onclick = () => browseFigurePath(elIndex);
+            }
+
+            domEl.ondragover = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+            };
+            domEl.ondrop = (e) => handleFigureDrop(e, elIndex);
+        }
+
         if (el.type === 'text') {
             domEl.style.fontSize = `${el.fontSize}px`;
             domEl.style.fontFamily = el.fontFamily;
             domEl.style.color = el.fontColor;
             applyAlignmentStyles(domEl, el);
-            domEl.contentEditable = "true";
+            domEl.contentEditable = "false";
 
-            if (selectedElementIndex === elIndex) {
+            if (selectedElementIndex === elIndex && domEl.classList.contains('editing-mode')) {
+                domEl.contentEditable = "true";
                 domEl.innerText = el.content;
             } else {
                 renderMarkdownAndKatex(domEl, el.content);
             }
 
+            domEl.ondblclick = (e) => {
+                e.stopPropagation();
+                domEl.classList.add('editing-mode');
+                domEl.contentEditable = "true";
+                domEl.innerText = el.content;
+                domEl.focus();
+            };
+
             domEl.oninput = (e) => scheduleLiveUpdate(el, e.target.innerText);
+
+            // Press Escape to exit writing mode safely
+            domEl.onkeydown = (e) => {
+                if (e.key === 'Escape' || e.code === 'Escape') {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    saveAndExitTextEditing(domEl, el);
+                }
+            };
         }
 
         domEl.onmousemove = (e) => {
@@ -746,10 +875,8 @@ function renderCanvas() {
                 domEl.style.cursor = 'ew-resize';
             } else if (isTop || isBottom) {
                 domEl.style.cursor = 'ns-resize';
-            } else if (e.ctrlKey || e.metaKey) {
-                domEl.style.cursor = 'grab';
             } else {
-                domEl.style.cursor = '';
+                domEl.style.cursor = 'move';
             }
         };
 
@@ -772,8 +899,6 @@ function renderCanvas() {
                 renderPropertiesPanel();
                 return;
             }
-
-            const isCtrlMove = e.ctrlKey || e.metaKey;
 
             const startX = e.clientX;
             const startY = e.clientY;
@@ -798,7 +923,7 @@ function renderCanvas() {
 
                 const useFreeform = moveEvent.altKey;
 
-                if (isCtrlMove && hasDragged) {
+                if (!isResizing && hasDragged) {
                     if (useFreeform) {
                         el.x = origX + dx;
                         el.y = origY + dy;
@@ -862,7 +987,7 @@ function renderCanvas() {
                 domEl.style.cursor = '';
                 if (hasDragged) markDirty();
                 renderPropertiesPanel();
-                if (hasDragged && isCtrlMove) {
+                if (hasDragged && !isResizing) {
                     renderEditor();
                 }
             }
@@ -870,7 +995,7 @@ function renderCanvas() {
             window.addEventListener('mousemove', onMouseMove);
             window.addEventListener('mouseup', onMouseUp);
 
-            if (!isResizing && !isCtrlMove && el.type === 'text') {
+            if (!isResizing && el.type === 'text' && domEl.classList.contains('editing-mode')) {
                 return;
             }
             e.stopPropagation();
@@ -937,7 +1062,17 @@ function renderPropertiesPanel() {
             </div>
         </div>
     `;
-
+    if (el.type === 'figure') {
+        html += `
+            <div class="prop-group">
+                <label>Figure File Path</label>
+                <input type="text" class="prop-control" value="${escapeHtml(el.src || '')}" placeholder="No file selected" oninput="updateProp('src', this.value)">
+            </div>
+            <div class="prop-group">
+                <button class="btn btn-secondary" style="width: 100%; margin-top: 4px;" onclick="browseFigurePath(${selectedElementIndex})">📁 Browse File...</button>
+            </div>
+        `;
+    }
     if (el.type === 'text') {
         html += `
             <div style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 4px;"></div>
@@ -1063,6 +1198,12 @@ async function getExportHtmlString() {
                 const tempDiv = document.createElement('div');
                 renderMarkdownAndKatex(tempDiv, el.content);
                 slidesMarkup += `<div class="el" style="${style}">${tempDiv.innerHTML}</div>`;
+            } else if (el.type === 'figure') {
+                if (el.src) {
+                    slidesMarkup += `<div class="el" style="${style}"><img src="${el.src}" style="width:100%; height:100%; object-fit:contain;" /></div>`;
+                } else {
+                    slidesMarkup += `<div class="el" style="${style} display:flex; align-items:center; justify-content:center; color:#94a3b8; font-family:sans-serif;">[Figure Placeholder]</div>`;
+                }
             } else {
                 slidesMarkup += `<div class="el" style="${style}"></div>`;
             }
@@ -1226,6 +1367,12 @@ function slideMarkupForPdf(s, idx) {
             const tempDiv = document.createElement('div');
             renderMarkdownAndKatex(tempDiv, el.content);
             markup += `<div class="el" style="${style}">${tempDiv.innerHTML}</div>`;
+        } else if (el.type === 'figure') {
+            if (el.src) {
+                slidesMarkup += `<div class="el" style="${style}"><img src="${el.src}" style="width:100%; height:100%; object-fit:contain;" /></div>`;
+            } else {
+                slidesMarkup += `<div class="el" style="${style} display:flex; align-items:center; justify-content:center; color:#94a3b8; font-family:sans-serif;">[Figure Placeholder]</div>`;
+            }
         } else {
             markup += `<div class="el" style="${style}"></div>`;
         }
@@ -1396,3 +1543,42 @@ window.addEventListener('pywebviewready', () => {
 if (!window.pywebview) {
     renderRecents();
 }
+
+function saveAndExitTextEditing(domEl, el) {
+    el.content = domEl.innerText;
+    domEl.contentEditable = "false";
+    domEl.classList.remove('editing-mode');
+    markDirty();
+    renderCanvas();
+    updateThumbnailLive();
+}
+
+
+// Global click listener to exit text editing mode when clicking outside active text box
+window.addEventListener('click', (e) => {
+    const editingEl = document.querySelector('.canvas-element.editing-mode');
+    if (editingEl && !editingEl.contains(e.target)) {
+        const currentSlide = slides[currentSlideIndex];
+        if (currentSlide && currentSlide.elements[selectedElementIndex]) {
+            saveAndExitTextEditing(editingEl, currentSlide.elements[selectedElementIndex]);
+        }
+    }
+});
+
+window.addEventListener('keydown', (e) => {
+    if ((e.key === 'Delete' || e.key === 'Backspace') && selectedElementIndex !== null) {
+        const activeEl = document.activeElement;
+        // Do not trigger deletion if user is typing inside text editing mode or input fields
+        if (activeEl && (activeEl.contentEditable === 'true' || activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
+            return;
+        }
+        const currentSlide = slides[currentSlideIndex];
+        if (currentSlide && currentSlide.elements[selectedElementIndex]) {
+            currentSlide.elements.splice(selectedElementIndex, 1);
+            selectedElementIndex = null;
+            markDirty();
+            renderEditor();
+            e.preventDefault();
+        }
+    }
+});

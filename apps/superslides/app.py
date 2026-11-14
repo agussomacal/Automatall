@@ -361,6 +361,100 @@ class Api:
         except Exception as e:
             return {"success": False, "error": str(e)}
 
+    def import_figure(self, project_folder, source_path):
+        """Copy an external figure into the project's figures/ folder and return paths/data URI."""
+        try:
+            if not project_folder or not os.path.exists(project_folder):
+                return {"success": False, "error": "No project folder set."}
+
+            fig_dir = os.path.join(project_folder, "figures")
+            os.makedirs(fig_dir, exist_ok=True)
+
+            filename = os.path.basename(source_path)
+            base, ext = os.path.splitext(filename)
+            dest_path = os.path.join(fig_dir, filename)
+
+            # Prevent name collisions if a file with the same name already exists
+            counter = 1
+            while os.path.exists(dest_path) and os.path.abspath(dest_path) != os.path.abspath(source_path):
+                dest_path = os.path.join(fig_dir, f"{base}_{counter}{ext}")
+                counter += 1
+
+            shutil.copy2(source_path, dest_path)
+            rel_path = os.path.relpath(dest_path, project_folder)
+
+            # Read into data URI for immediate reliable rendering
+            with open(dest_path, "rb") as f:
+                encoded = base64.b64encode(f.read()).decode('utf-8')
+
+            mime_type = "image/png"
+            if dest_path.lower().endswith(('.jpg', '.jpeg')):
+                mime_type = "image/jpeg"
+            elif dest_path.lower().endswith('.svg'):
+                mime_type = "image/svg+xml"
+
+            return {
+                "success": True,
+                "path": dest_path,
+                "relative_path": rel_path,
+                "data_uri": f"data:{mime_type};base64,{encoded}"
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
+    def select_figure_file(self):
+        """Open dialog to pick a figure/image file and return its base64 data URI."""
+        window = webview.windows[0]
+        file_path = window.create_file_dialog(
+            webview.OPEN_DIALOG,
+            allow_multiple=False,
+            file_types=('Figure Files (*.png;*.jpg;*.jpeg;*.svg;*.pdf;*.eps)', 'All Files (*.*)')
+        )
+        if not file_path:
+            return {"success": False, "error": "Cancelled"}
+        if isinstance(file_path, (list, tuple)):
+            file_path = file_path[0]
+
+        try:
+            ext = os.path.splitext(file_path)[1].lower()
+            mime_type = "image/png"
+            if ext in ['.jpg', '.jpeg']:
+                mime_type = "image/jpeg"
+            elif ext == '.svg':
+                mime_type = "image/svg+xml"
+            elif ext in ['.pdf', '.eps']:
+                # Render first page of PDF to image using Pillow
+                try:
+                    from pdf2image import convert_from_path
+                    images = convert_from_path(file_path, first_page=1, last_page=1)
+                    if images:
+                        buffered = io.BytesIO()
+                        images[0].save(buffered, format="PNG")
+                        encoded = base64.b64encode(buffered.getvalue()).decode('utf-8')
+                        return {"success": True, "path": file_path, "data_uri": f"data:image/png;base64,{encoded}"}
+                except Exception:
+                    pass
+                # Fallback: open via PIL if supported
+                try:
+                    img = Image.open(file_path).convert("RGB")
+                    buffered = io.BytesIO()
+                    img.save(buffered, format="PNG")
+                    encoded = base64.b64encode(buffered.getvalue()).decode('utf-8')
+                    return {"success": True, "path": file_path, "data_uri": f"data:image/png;base64,{encoded}"}
+                except Exception as e:
+                    return {"success": False, "error": f"Could not parse vector/PDF figure: {e}"}
+
+            with open(file_path, "rb") as f:
+                encoded = base64.b64encode(f.read()).decode('utf-8')
+
+            return {
+                "success": True,
+                "path": file_path,
+                "data_uri": f"data:{mime_type};base64,{encoded}"
+            }
+        except Exception as e:
+            return {"success": False, "error": str(e)}
+
 
 if __name__ == '__main__':
     check_and_install_dependencies()

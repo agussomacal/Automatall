@@ -582,3 +582,7 @@ select.prop-control option {
 .print-export-container {
     display: none;
 }
+
+.canvas-element.element-shape[style*="border-style: dashed"] {
+    background-color: rgba(255, 255, 255, 0.03);
+}
