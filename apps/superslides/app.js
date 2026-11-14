@@ -6,6 +6,8 @@ let slideHeight = 1080;
 let gridSize = 20;
 let isDarkMode = false;
 
+let elementClipboard = null;
+
 let rawTexMacros = `\\usepackage{amssymb}
 \\usepackage{amsfonts}
 \\newcommand{\\R}{\\mathbb{R}}
@@ -1612,12 +1614,12 @@ window.addEventListener('click', (e) => {
 });
 
 window.addEventListener('keydown', (e) => {
+    const activeEl = document.activeElement;
+    const isEditing = activeEl && (activeEl.contentEditable === 'true' || activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA');
+
+    // 1. Delete / Backspace
     if ((e.key === 'Delete' || e.key === 'Backspace') && selectedElementIndex !== null) {
-        const activeEl = document.activeElement;
-        // Do not trigger deletion if user is typing inside text editing mode or input fields
-        if (activeEl && (activeEl.contentEditable === 'true' || activeEl.tagName === 'INPUT' || activeEl.tagName === 'TEXTAREA')) {
-            return;
-        }
+        if (isEditing) return;
         const currentSlide = slides[currentSlideIndex];
         if (currentSlide && currentSlide.elements[selectedElementIndex]) {
             currentSlide.elements.splice(selectedElementIndex, 1);
@@ -1625,6 +1627,41 @@ window.addEventListener('keydown', (e) => {
             markDirty();
             renderEditor();
             e.preventDefault();
+        }
+    }
+
+    // 2. Copy (Ctrl + C / Cmd + C)
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'c') {
+        if (isEditing) return;
+        if (selectedElementIndex !== null) {
+            const currentSlide = slides[currentSlideIndex];
+            if (currentSlide && currentSlide.elements[selectedElementIndex]) {
+                // Deep copy the selected element into our internal clipboard
+                elementClipboard = JSON.parse(JSON.stringify(currentSlide.elements[selectedElementIndex]));
+                e.preventDefault();
+            }
+        }
+    }
+
+    // 3. Paste (Ctrl + V / Cmd + V)
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'v') {
+        if (isEditing) return;
+        if (elementClipboard) {
+            const currentSlide = slides[currentSlideIndex];
+            if (currentSlide) {
+                // Deep copy from clipboard to avoid reference linkage
+                const newEl = JSON.parse(JSON.stringify(elementClipboard));
+
+                // Shift slightly diagonally so the user can easily see the new duplicate
+                newEl.x += 40;
+                newEl.y += 40;
+
+                currentSlide.elements.push(newEl);
+                selectedElementIndex = currentSlide.elements.length - 1;
+                markDirty();
+                renderEditor();
+                e.preventDefault();
+            }
         }
     }
 });
