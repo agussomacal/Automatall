@@ -519,27 +519,16 @@ function addElement(type) {
     renderEditor();
 }
 
-async function browseFigurePath(elementIndex) {
-    if (window.pywebview && window.pywebview.api) {
-        const res = await window.pywebview.api.select_figure_file();
-        if (res.success && res.path) {
-            processAndAssignFigure(elementIndex, res.path);
-        }
-    } else {
-        const path = prompt("Enter path or URL to figure:");
-        if (path) assignFigureSource(elementIndex, path, path);
-    }
-}
 
 async function processAndAssignFigure(elementIndex, filePath) {
     if (window.pywebview && window.pywebview.api && projectFolder) {
         const res = await window.pywebview.api.import_figure(projectFolder, filePath);
         if (res.success) {
-            assignFigureSource(elementIndex, res.data_uri, res.relative_path);
+            assignFigureSource(elementIndex, res.data_uri, filePath, res.relative_path);
             return;
         }
     }
-    assignFigureSource(elementIndex, filePath, filePath);
+    assignFigureSource(elementIndex, filePath, filePath, filePath);
 }
 
 function handleFigureDrop(e, elIndex) {
@@ -552,17 +541,18 @@ function handleFigureDrop(e, elIndex) {
             processAndAssignFigure(elIndex, filePath);
         } else {
             const blobUrl = URL.createObjectURL(file);
-            assignFigureSource(elIndex, blobUrl, file.name);
+            assignFigureSource(elIndex, blobUrl, file.name, file.name);
         }
     }
 }
 
-function assignFigureSource(elementIndex, dataUri, storedPath) {
+function assignFigureSource(elementIndex, dataUri, originalPath, storedPath) {
     const currentSlide = slides[currentSlideIndex];
     if (!currentSlide || !currentSlide.elements[elementIndex]) return;
 
     const el = currentSlide.elements[elementIndex];
     el.src = dataUri;
+    el.originalPath = originalPath;
     el.filePath = storedPath;
     el.borderStyle = 'solid';
     markDirty();
@@ -571,6 +561,33 @@ function assignFigureSource(elementIndex, dataUri, storedPath) {
     updateThumbnailLive();
 }
 
+async function browseFigurePath(elementIndex) {
+    if (window.pywebview && window.pywebview.api) {
+        const res = await window.pywebview.api.select_figure_file();
+        if (res.success && res.path) {
+            processAndAssignFigure(elementIndex, res.path);
+        }
+    } else {
+        const path = prompt("Enter path or URL to figure:");
+        if (path) assignFigureSource(elementIndex, path, path, path);
+    }
+}
+
+async function openPathInSystem(fullPath) {
+    if (!fullPath) return;
+
+    // Extract the containing folder path from the file path
+    // Handles both forward slashes and backslashes
+    const folderPath = fullPath.replace(/[/\\][^/\\]*$/, '');
+
+    if (window.pywebview && window.pywebview.api) {
+        // Call the backend Python API to open the directory
+        // (Assumes you have a method like open_folder or open_file_with_system that accepts folder paths)
+        await window.pywebview.api.open_file_with_system(folderPath);
+    } else {
+        alert("Folder Path: " + folderPath);
+    }
+}
 
 function renderMarkdownAndKatex(element, rawText) {
     let html = rawText || '';
@@ -1099,13 +1116,29 @@ function renderPropertiesPanel() {
         </div>
     `;
     if (el.type === 'figure') {
+        const origPath = el.originalPath || '';
+        const localPath = el.filePath || '';
+        const absLocalPath = (projectFolder && localPath && !localPath.startsWith('/') && !localPath.match(/^[a-zA-Z]:\\/))
+            ? `${projectFolder}/${localPath}`
+            : localPath;
+
         html += `
             <div class="prop-group">
-                <label>Figure File Path</label>
-                <input type="text" class="prop-control" value="${escapeHtml(el.src || '')}" placeholder="No file selected" oninput="updateProp('src', this.value)">
+                <label>Original Path</label>
+                <div style="display: flex; gap: 6px;">
+                    <input type="text" class="prop-control" readonly value="${escapeHtml(origPath)}" placeholder="No original path">
+                    <button class="btn btn-secondary" style="width: auto; padding: 6px 10px; margin-bottom: 0;" onclick="openPathInSystem('${escapeHtml(origPath).replace(/'/g, "\\'")}')" title="Open in File Manager">📂</button>
+                </div>
             </div>
-            <div class="prop-group">
-                <button class="btn btn-secondary" style="width: 100%; margin-top: 4px;" onclick="browseFigurePath(${selectedElementIndex})">📁 Browse File...</button>
+            <div class="prop-group" style="margin-top: 8px;">
+                <label>Local Copy Path</label>
+                <div style="display: flex; gap: 6px;">
+                    <input type="text" class="prop-control" readonly value="${escapeHtml(localPath)}" placeholder="No local copy">
+                    <button class="btn btn-secondary" style="width: auto; padding: 6px 10px; margin-bottom: 0;" onclick="openPathInSystem('${escapeHtml(absLocalPath || origPath).replace(/'/g, "\\'")}')" title="Open in File Manager">📂</button>
+                </div>
+            </div>
+            <div class="prop-group" style="margin-top: 12px;">
+                <button class="btn btn-secondary" style="width: 100%;" onclick="browseFigurePath(${selectedElementIndex})">📁 Browse New File...</button>
             </div>
         `;
     }
