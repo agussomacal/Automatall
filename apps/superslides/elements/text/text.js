@@ -73,13 +73,18 @@ const TextElement = {
             return;
         }
 
-        // Canvas context: double-click to edit, live update, Escape to exit.
-        domEl.contentEditable = 'false';
+        // Check if this specific element is currently being edited
+        const isEditing = state.selectedElementIndex === ctx.elIndex && domEl.classList.contains('editing-mode');
 
-        if (state.selectedElementIndex === ctx.elIndex && domEl.classList.contains('editing-mode')) {
+        if (isEditing) {
             domEl.contentEditable = 'true';
-            domEl.innerText = el.content;
+            // Only set innerText if the DOM doesn't already match el.content
+            // (prevents resetting cursor position on minor updates)
+            if (domEl.innerText !== el.content) {
+                domEl.innerText = el.content;
+            }
         } else {
+            domEl.contentEditable = 'false';
             renderMarkdownAndKatex(domEl, el.content);
         }
 
@@ -91,7 +96,17 @@ const TextElement = {
             domEl.focus();
         };
 
-        domEl.oninput = (e) => scheduleLiveUpdate(el, e.target.innerText);
+        domEl.oninput = (e) => {
+            // Update model directly without resetting innerText/cursor
+            el.content = e.target.innerText;
+            markDirty();
+        };
+
+        domEl.onblur = () => {
+            if (domEl.classList.contains('editing-mode')) {
+                saveAndExitTextEditing(domEl, el);
+            }
+        };
 
         domEl.onkeydown = (e) => {
             if (e.key === 'Escape' || e.code === 'Escape') {

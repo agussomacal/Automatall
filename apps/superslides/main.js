@@ -85,7 +85,6 @@ async function initRecents() {
     if (api) {
         try {
             const res = await api.get_recent_projects();
-            console.log(res)
             if (res && res.success && Array.isArray(res.projects)) {
                 state.recents = res.projects;
             }
