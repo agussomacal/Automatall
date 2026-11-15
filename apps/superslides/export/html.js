@@ -7,7 +7,7 @@
 
 import { state } from '../core/state.js';
 import { ElementRegistry } from '../core/registry.js';
-import { escapeHtml } from '../core/render.js';
+import { escapeHtml, textElementSharedStyle } from '../core/render.js';
 
 export async function getExportHtmlString() {
     let katexCss = '';
