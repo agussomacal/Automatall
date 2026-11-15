@@ -1,5 +1,6 @@
 # Roadmap
 
+* [ ] Refactoring.
 * [ ] Delete slides.
 ___
 * [ ] Template elements.
