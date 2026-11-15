@@ -1,24 +1,19 @@
 // ============================================================
-// main.js — FINAL version. Entry module: loads the module graph,
-// exposes the functions referenced by inline onclick="" handlers
-// in index.html onto window, starts the app.
-//
-// index.html loads ONLY:
-//   <script type="module" src="main.js"></script>
+// main.js — Patched entry module: handles recents robustness,
+// toolbar plugin registration without duplication, and startup hooks.
 // ============================================================
-
 import {
     state, pyApi, parseTexMacros, resetMacros, markDirty,
     startAutosave, flushPendingSave, renameProject, flashSaveIndicator,
     serializeProject, deserializeProject, currentSnapshot,
     DEFAULT_TEX_MACROS,
 } from './core/state.js';
-import { ElementRegistry } from './core/registry.js';
+import {ElementRegistry} from './core/registry.js';
 import {
     bindMarkDirtyAndRender, changeGridSize, changeSlideSizePreset,
     syncSlideSizeSelect, syncGridSizeSelect, updateDimensionsCSS,
 } from './core/render.js';
-import { initKeyboardShortcuts } from './core/clipboard.js';
+import {initKeyboardShortcuts} from './core/clipboard.js';
 
 // Side-effectful import: each element module self-registers.
 import './elements/index.js';
@@ -27,7 +22,7 @@ import './elements/index.js';
 import {
     renderEditor, addElement, addSlide, selectSlide, updateThumbnailLive,
 } from './editor/editor.js';
-import { projectExportHtml, projectExportPdf } from './export/index.js';
+import {projectExportHtml, projectExportPdf} from './export/index.js';
 
 // ---------- View switching ----------
 
@@ -37,8 +32,10 @@ function showView(viewId) {
         v.style.display = 'none';
     });
     const target = document.getElementById(viewId);
-    target.classList.add('active');
-    target.style.display = 'flex';
+    if (target) {
+        target.classList.add('active');
+        target.style.display = 'flex';
+    }
 }
 
 // ---------- Dark mode ----------
@@ -64,15 +61,22 @@ function renderRecents() {
     const ul = document.getElementById('project-list');
     if (!ul) return;
     ul.innerHTML = '';
+
+    // Ensure recents is always an array
+    if (!Array.isArray(state.recents)) {
+        state.recents = [];
+    }
+
     state.recents.forEach(r => {
+        if (!r || !r.path) return;
         const li = document.createElement('li');
         li.className = 'project-item';
-        li.innerHTML = `<span>${r.name}</span><span style="font-size: 10px; opacity: 0.6; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${r.path}</span>`;
+        li.innerHTML = `<span>${r.name || 'Untitled'}</span><span style="font-size: 10px; opacity: 0.6; max-width: 180px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${r.path}</span>`;
         li.onclick = () => openProjectByPath(r.path);
         ul.appendChild(li);
     });
     if (state.recents.length === 0) {
-        ul.innerHTML = '<li class="project-item" style="cursor: default;">No projects found on disk</li>';
+        ul.innerHTML = '<li class="project-item" style="cursor: default;">No recent projects found</li>';
     }
 }
 
@@ -81,7 +85,8 @@ async function initRecents() {
     if (api) {
         try {
             const res = await api.get_recent_projects();
-            if (res.success && Array.isArray(res.projects)) {
+            console.log(res)
+            if (res && res.success && Array.isArray(res.projects)) {
                 state.recents = res.projects;
             }
         } catch (e) {
@@ -92,12 +97,13 @@ async function initRecents() {
 }
 
 function addRecent(name, path) {
-    state.recents = state.recents.filter(r => r.path !== path);
-    state.recents.unshift({ name, path });
-    state.recents = state.recents.slice(0, 5);
+    if (!path) return;
+    state.recents = (state.recents || []).filter(r => r && r.path !== path);
+    state.recents.unshift({name: name || 'Untitled', path});
+    state.recents = state.recents.slice(0, 10);
     const api = pyApi();
     if (api && api.add_recent_project) {
-        api.add_recent_project(name, path).then(initRecents);
+        api.add_recent_project(name, path).then(initRecents).catch(() => renderRecents());
     } else {
         renderRecents();
     }
@@ -110,11 +116,12 @@ function startProject(name, path, folder) {
     state.projectPath = path;
     state.projectFolder = folder;
 
-    state.slides = [{ id: 1, title: 'Title Slide', elements: [] }];
+    state.slides = [{id: 1, title: 'Title Slide', elements: []}];
     state.currentSlideIndex = 0;
     state.selectedElementIndex = null;
 
-    document.getElementById('project-title-input').value = state.projectName;
+    const titleInput = document.getElementById('project-title-input');
+    if (titleInput) titleInput.value = state.projectName;
     if (path) addRecent(state.projectName, path);
 
     state.lastSnapshot = currentSnapshot();
@@ -130,15 +137,19 @@ async function loadProjectMacrosFromDisk() {
         resetMacros();
         return;
     }
-    const res = await api.load_text_file(state.projectFolder, 'macros.tex');
-    if (res.success) {
-        state.rawTexMacros = res.content;
-        state.projectMacros = parseTexMacros(state.rawTexMacros);
-    } else {
-        state.rawTexMacros = DEFAULT_TEX_MACROS;
-        state.projectMacros = parseTexMacros(state.rawTexMacros);
-        await api.save_text_file(state.projectFolder, 'macros.tex', state.rawTexMacros);
-        await api.save_text_file(state.projectFolder, 'macros.json', JSON.stringify(state.projectMacros, null, 2));
+    try {
+        const res = await api.load_text_file(state.projectFolder, 'macros.tex');
+        if (res && res.success) {
+            state.rawTexMacros = res.content;
+            state.projectMacros = parseTexMacros(state.rawTexMacros);
+        } else {
+            state.rawTexMacros = DEFAULT_TEX_MACROS;
+            state.projectMacros = parseTexMacros(state.rawTexMacros);
+            await api.save_text_file(state.projectFolder, 'macros.tex', state.rawTexMacros);
+            await api.save_text_file(state.projectFolder, 'macros.json', JSON.stringify(state.projectMacros, null, 2));
+        }
+    } catch (e) {
+        resetMacros();
     }
 }
 
@@ -147,8 +158,8 @@ async function openProjectByPath(path, content) {
         if (!content) {
             const api = pyApi();
             const res = await api.load_project_at(path);
-            if (!res.success) {
-                alert(`Could not open project: ${res.error}`);
+            if (!res || !res.success) {
+                alert(`Could not open project: ${res ? res.error : 'Unknown error'}`);
                 return;
             }
             content = res.content;
@@ -162,7 +173,9 @@ async function openProjectByPath(path, content) {
         syncSlideSizeSelect();
         syncGridSizeSelect();
         updateDimensionsCSS();
-        document.getElementById('project-title-input').value = state.projectName;
+
+        const titleInput = document.getElementById('project-title-input');
+        if (titleInput) titleInput.value = state.projectName;
 
         await loadProjectMacrosFromDisk();
 
@@ -183,8 +196,8 @@ async function openProjectFromFile() {
         return;
     }
     const res = await api.load_project();
-    if (!res.success) {
-        if (res.error !== 'Cancelled') alert(`Could not open project: ${res.error}`);
+    if (!res || !res.success) {
+        if (res && res.error !== 'Cancelled') alert(`Could not open project: ${res.error}`);
         return;
     }
     openProjectByPath(res.path, res.content);
@@ -214,7 +227,8 @@ function openSampleProject() {
     }];
     state.currentSlideIndex = 0;
     state.selectedElementIndex = null;
-    document.getElementById('project-title-input').value = state.projectName;
+    const titleInput = document.getElementById('project-title-input');
+    if (titleInput) titleInput.value = state.projectName;
     showView('editor-view');
     renderEditor();
 }
@@ -222,6 +236,7 @@ function openSampleProject() {
 async function goToHome() {
     await flushPendingSave();
     showView('welcome-view');
+    initRecents(); // Refresh recents list when returning home
 }
 
 // ---------- New-project modal ----------
@@ -229,48 +244,59 @@ async function goToHome() {
 let newProjectChosen = false;
 
 function showNewProjectModal() {
-    document.getElementById('new-project-name').value = '';
+    const nameInput = document.getElementById('new-project-name');
+    if (nameInput) nameInput.value = '';
     newProjectChosen = false;
-    document.getElementById('new-project-folder').textContent = 'No folder selected';
-    document.getElementById('new-project-error').textContent = '';
-    document.getElementById('new-project-create-btn').disabled = true;
-    document.getElementById('new-project-modal').classList.add('show');
-    document.getElementById('new-project-name').focus();
+    const folderEl = document.getElementById('new-project-folder');
+    if (folderEl) folderEl.textContent = 'No folder selected';
+    const errEl = document.getElementById('new-project-error');
+    if (errEl) errEl.textContent = '';
+    const btn = document.getElementById('new-project-create-btn');
+    if (btn) btn.disabled = true;
+    const modal = document.getElementById('new-project-modal');
+    if (modal) modal.classList.add('show');
+    if (nameInput) nameInput.focus();
 }
 
 function closeNewProjectModal() {
-    document.getElementById('new-project-modal').classList.remove('show');
+    const modal = document.getElementById('new-project-modal');
+    if (modal) modal.classList.remove('show');
 }
 
 function validateNewProjectForm() {
-    const name = document.getElementById('new-project-name').value.trim();
+    const nameInput = document.getElementById('new-project-name');
+    const name = nameInput ? nameInput.value.trim() : '';
     const err = document.getElementById('new-project-error');
-    err.textContent = '';
+    if (err) err.textContent = '';
     const btn = document.getElementById('new-project-create-btn');
+    if (!btn) return;
     if (name && newProjectChosen) {
         btn.disabled = false;
     } else {
         btn.disabled = true;
-        if (name && !newProjectChosen) err.textContent = 'Pick a folder for the project.';
+        if (name && !newProjectChosen && err) err.textContent = 'Pick a folder for the project.';
     }
 }
 
 async function chooseNewProjectFolder() {
     const api = pyApi();
     if (!api) {
-        document.getElementById('new-project-folder').textContent = '(dialog unavailable in browser preview)';
+        const folderEl = document.getElementById('new-project-folder');
+        if (folderEl) folderEl.textContent = '(dialog unavailable in browser preview)';
         return;
     }
     const parent = await api.select_folder();
     if (parent && parent.success) {
         newProjectChosen = true;
-        document.getElementById('new-project-folder').textContent = parent.path;
+        const folderEl = document.getElementById('new-project-folder');
+        if (folderEl) folderEl.textContent = parent.path;
         validateNewProjectForm();
     }
 }
 
 async function confirmCreateProject() {
-    const name = document.getElementById('new-project-name').value.trim();
+    const nameInput = document.getElementById('new-project-name');
+    const name = nameInput ? nameInput.value.trim() : '';
     const err = document.getElementById('new-project-error');
 
     const api = pyApi();
@@ -281,8 +307,8 @@ async function confirmCreateProject() {
     }
 
     const res = await api.create_project(name);
-    if (!res.success) {
-        err.textContent = res.error;
+    if (!res || !res.success) {
+        if (err) err.textContent = res ? res.error : 'Creation failed';
         return;
     }
 
@@ -294,8 +320,8 @@ async function confirmCreateProject() {
     await api.save_text_file(state.projectFolder, 'macros.json', JSON.stringify(state.projectMacros, null, 2));
 
     const saveRes = await api.save_project_data(state.projectPath, serializeProject());
-    if (!saveRes.success) {
-        err.textContent = saveRes.error;
+    if (!saveRes || !saveRes.success) {
+        if (err) err.textContent = saveRes ? saveRes.error : 'Save failed';
         return;
     }
 
@@ -306,19 +332,24 @@ async function confirmCreateProject() {
 // ---------- LaTeX macros modal ----------
 
 function openMacrosModal() {
-    document.getElementById('macros-textarea').value = state.rawTexMacros;
-    document.getElementById('macros-error').textContent = '';
-    document.getElementById('macros-modal').classList.add('show');
+    const ta = document.getElementById('macros-textarea');
+    if (ta) ta.value = state.rawTexMacros;
+    const err = document.getElementById('macros-error');
+    if (err) err.textContent = '';
+    const modal = document.getElementById('macros-modal');
+    if (modal) modal.classList.add('show');
 }
 
 function closeMacrosModal() {
-    document.getElementById('macros-modal').classList.remove('show');
+    const modal = document.getElementById('macros-modal');
+    if (modal) modal.classList.remove('show');
 }
 
 async function saveMacros() {
     const errEl = document.getElementById('macros-error');
     try {
-        state.rawTexMacros = document.getElementById('macros-textarea').value;
+        const ta = document.getElementById('macros-textarea');
+        if (ta) state.rawTexMacros = ta.value;
         state.projectMacros = parseTexMacros(state.rawTexMacros);
         markDirty();
 
@@ -331,7 +362,7 @@ async function saveMacros() {
         closeMacrosModal();
         renderEditor();
     } catch (e) {
-        errEl.textContent = `Parsing error: ${e.message}`;
+        if (errEl) errEl.textContent = `Parsing error: ${e.message}`;
     }
 }
 
@@ -361,25 +392,25 @@ Object.assign(window, {
 
 // ---------- Startup ----------
 
-// Bind state->render bridge (avoids circular static imports).
 bindMarkDirtyAndRender(renderEditor);
 
-// Initial UI state.
 applyThemeToggle();
 syncGridSizeSelect();
 syncSlideSizeSelect();
 updateDimensionsCSS();
 renderRecents();
 
-// Autosave + keyboard shortcuts.
 startAutosave();
 initKeyboardShortcuts();
 
-// Flush pending changes when the window closes.
 window.addEventListener('beforeunload', flushPendingSave);
 
-// pywebview readiness: load persisted recents.
-window.addEventListener('pywebviewready', initRecents);
-if (!window.pywebview) {
-    initRecents(); // browser preview fallback
+// Robust initialization for pywebview vs browser preview
+if (window.pywebview) {
+    // If pywebview is already ready, run immediately; otherwise wait for the event
+    initRecents();
+} else {
+    window.addEventListener('pywebviewready', initRecents);
+    // Browser preview fallback if not running inside pywebview
+    setTimeout(initRecents, 100);
 }
