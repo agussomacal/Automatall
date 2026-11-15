@@ -1,14 +1,12 @@
 // ============================================================
 // export/pdf.js — PDF generation.
-// Preferred: vector via headless Chromium (backend print_html_to_pdf)
-// printing the SAME HTML the viewer uses — pixel-perfect math.
-// Fallback: raster via SVG <foreignObject> drawn by the browser's
-// real engine (fonts embedded as data URIs).
+// Automatically saves the PDF directly inside the project folder.
 // ============================================================
 
-import { state, pyApi } from '../core/state.js';
-import { ElementRegistry } from '../core/registry.js';
-import { textElementSharedStyle, renderMarkdownAndKatexToString } from '../core/render.js';
+import {state, pyApi} from '../core/state.js';
+import {ElementRegistry} from '../core/registry.js';
+import {textElementSharedStyle, renderMarkdownAndKatexToString} from '../core/render.js';
+import {getExportHtmlString} from './html.js';
 
 // ---------- Raster fallback helpers ----------
 
@@ -30,11 +28,11 @@ function getEmbeddedKatexCss() {
         const base = 'https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/';
         let css = await (await fetch('libs/katex.min.css')).text();
 
-        // Embed text-styles.css as well so raster matches the editor.
         try {
             const ts = await (await fetch('text-styles.css')).text();
             css = ts + '\n' + css;
-        } catch (e) { /* non-fatal */ }
+        } catch (e) { /* non-fatal */
+        }
 
         const seen = new Map();
         for (const m of css.matchAll(/url\(\s*["']?([^"')]+)["']?\s*\)/g)) {
@@ -142,42 +140,37 @@ async function exportAsRasterPdf(projectFolder, pdfFilename) {
     return api.save_direct_pdf_from_images(projectFolder, pdfFilename, imageDataList);
 }
 
-/**
- * Generates and saves the viewer HTML in the project folder, then
- * produces the PDF (vector preferred, raster fallback).
- * Returns {ok, htmlPath?, pdfPath?, error?}.
- */
 export async function exportProjectPdf() {
     const api = pyApi();
     if (!state.projectFolder) {
-        return { ok: false, error: 'Please create or open a project folder first before exporting.' };
+        return {ok: false, error: 'Please create or open a project folder first before exporting.'};
     }
 
     const baseName = (state.projectName || 'presentation').replace(/\s+/g, '_');
 
-    // 1. Save the HTML (single source for viewer + print)
+    // 1. Save the HTML in the project folder
     const htmlContent = await getExportHtmlString();
     const htmlSaveRes = await api.save_text_file(state.projectFolder, `${baseName}.html`, htmlContent);
     if (!htmlSaveRes.success) {
-        return { ok: false, error: `Export failed to save HTML: ${htmlSaveRes.error}` };
+        return {ok: false, error: `Export failed to save HTML: ${htmlSaveRes.error}`};
     }
     const htmlPath = htmlSaveRes.path;
 
-    // 2. Vector PDF via headless Chromium
+    // 2. Vector PDF via headless Chromium in the project folder
     const vec = await exportAsVectorPdf(htmlPath);
     if (vec.success) {
-        return { ok: true, htmlPath, pdfPath: vec.path };
+        return {ok: true, htmlPath, pdfPath: vec.path};
     }
     console.warn('Vector PDF unavailable, falling back to raster engine:', vec.error);
 
-    // 3. Raster fallback
+    // 3. Raster fallback in the project folder
     try {
         const rasterRes = await exportAsRasterPdf(state.projectFolder, `${baseName}.pdf`);
         if (rasterRes.success) {
-            return { ok: true, htmlPath, pdfPath: rasterRes.path };
+            return {ok: true, htmlPath, pdfPath: rasterRes.path};
         }
-        return { ok: false, error: `HTML exported successfully, but raster PDF export failed: ${rasterRes.error}` };
+        return {ok: false, error: `HTML exported successfully, but raster PDF export failed: ${rasterRes.error}`};
     } catch (err) {
-        return { ok: false, error: `PDF Export error: ${err.message}` };
+        return {ok: false, error: `PDF Export error: ${err.message}`};
     }
 }

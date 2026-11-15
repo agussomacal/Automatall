@@ -1,6 +1,6 @@
 // ============================================================
 // export/index.js — Clean export module bridge.
-// Connects UI export actions to html.js and pdf.js modules.
+// Automatically saves HTML directly inside the project folder.
 // ============================================================
 
 import { state, pyApi } from '../core/state.js';
@@ -12,23 +12,18 @@ export async function projectExportHtml() {
         const htmlContent = await getExportHtmlString();
         const api = pyApi();
 
-        if (api && state.projectFolder) {
-            const safeName = (state.projectName || 'presentation').replace(/\s+/g, '_');
-            const res = await api.save_text_file(state.projectFolder, `${safeName}.html`, htmlContent);
-            if (res.success) {
-                api.open_file_with_system(res.path);
-                return;
-            }
+        if (!state.projectFolder) {
+            alert('Please create or open a project folder first before exporting.');
+            return;
         }
 
-        // Browser fallback / standalone save
-        const blob = new Blob([htmlContent], { type: 'text/html' });
-        const url = URL.createObjectURL(blob);
-        const a = document.createElement('a');
-        a.href = url;
-        a.download = 'presentation.html';
-        a.click();
-        URL.revokeObjectURL(url);
+        const safeName = (state.projectName || 'presentation').replace(/\s+/g, '_');
+        const res = await api.save_text_file(state.projectFolder, `${safeName}.html`, htmlContent);
+        if (res.success) {
+            api.open_file_with_system(res.path);
+        } else {
+            alert(`HTML export failed: ${res.error}`);
+        }
     } catch (e) {
         alert(`HTML export failed: ${e.message}`);
     }
