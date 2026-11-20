@@ -1,7 +1,8 @@
 // ============================================================
 // editor/editor.js — The editor manager.
-// Supports single & multi-selection for both slides and elements,
-// group dragging & arrow-key nudging, cut/copy/paste, and deletion.
+// Supports single & multi-selection for slides and elements,
+// slide drag-and-drop reordering, group dragging & arrow nudging,
+// cut/copy/paste, and deletion.
 // ============================================================
 
 import {
@@ -24,6 +25,8 @@ import {
 } from '../core/render.js';
 import { startDragOrResize, updateResizeCursor, gridSteps, snapToGridPoint } from '../core/geometry.js';
 import { saveAndExitTextEditing } from '../elements/text/text.js';
+
+const SLIDE_DRAG_THRESHOLD_PX = 5;
 
 // ---------- Toolbar (built from the registry) ----------
 
@@ -351,20 +354,20 @@ function renderPropertiesPanel() {
         panelBody.innerHTML = `
             <div class="prop-group">
                 <label>Selection</label>
-                <input type="text" class="prop-control" value="${selectedIndices.length} objects selected" disabled style="opacity: 0.7;">
+                <input type="text" class="prop-control prop-readonly" value="${selectedIndices.length} objects selected" disabled>
             </div>
-            <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">
+            <p class="prop-hint">
                 Drag or use <strong>Arrow keys</strong> to move all ${selectedIndices.length} objects together, <strong>Ctrl+X / Ctrl+C / Ctrl+V</strong> to cut/copy/paste, or <strong>Delete</strong> to remove.
             </p>
-            <div style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 4px;"></div>
+            <div class="prop-divider"></div>
             <div class="prop-group">
                 <label>Background Color (All Selected)</label>
-                <input type="color" class="prop-control" value="${firstEl.bg === 'transparent' ? '#ffffff' : firstEl.bg}" style="height: 34px; padding: 2px;" oninput="updateProp('bg', this.value)">
+                <input type="color" class="prop-control prop-color" value="${firstEl.bg === 'transparent' ? '#ffffff' : firstEl.bg}" oninput="updateProp('bg', this.value)">
             </div>
             <div class="prop-row">
                 <div class="prop-group">
                     <label>Border Color</label>
-                    <input type="color" class="prop-control" value="${firstEl.borderCol === 'transparent' ? '#000000' : firstEl.borderCol}" style="height: 34px; padding: 2px;" oninput="updateProp('borderCol', this.value)">
+                    <input type="color" class="prop-control prop-color" value="${firstEl.borderCol === 'transparent' ? '#000000' : firstEl.borderCol}" oninput="updateProp('borderCol', this.value)">
                 </div>
                 <div class="prop-group">
                     <label>Border Width</label>
@@ -383,7 +386,7 @@ function renderPropertiesPanel() {
     let html = `
         <div class="prop-group">
             <label>Object Type</label>
-            <input type="text" class="prop-control" value="${escapeHtml(typeLabel)}" disabled style="opacity: 0.6;">
+            <input type="text" class="prop-control prop-readonly" value="${escapeHtml(typeLabel)}" disabled>
         </div>
         <div class="prop-row">
             <div class="prop-group">
@@ -412,15 +415,15 @@ function renderPropertiesPanel() {
     }
 
     html += `
-        <div style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 4px;"></div>
+        <div class="prop-divider"></div>
         <div class="prop-group">
             <label>Background Color</label>
-            <input type="color" class="prop-control" value="${el.bg === 'transparent' ? '#ffffff' : el.bg}" style="height: 34px; padding: 2px;" oninput="updateProp('bg', this.value)">
+            <input type="color" class="prop-control prop-color" value="${el.bg === 'transparent' ? '#ffffff' : el.bg}" oninput="updateProp('bg', this.value)">
         </div>
         <div class="prop-row">
             <div class="prop-group">
                 <label>Border Color</label>
-                <input type="color" class="prop-control" value="${el.borderCol === 'transparent' ? '#000000' : el.borderCol}" style="height: 34px; padding: 2px;" oninput="updateProp('borderCol', this.value)">
+                <input type="color" class="prop-control prop-color" value="${el.borderCol === 'transparent' ? '#000000' : el.borderCol}" oninput="updateProp('borderCol', this.value)">
             </div>
             <div class="prop-group">
                 <label>Border Width (px)</label>
@@ -441,13 +444,184 @@ function renderPropertiesPanel() {
     panelBody.innerHTML = html;
 }
 
-// ---------- Thumbnails & Slide selection ----------
+// ---------- Thumbnails, Slide selection & Drag reorder ----------
 
 function updateSlideThumbSelectionUI() {
     const selectedSet = new Set(getSelectedSlideIndices());
     document.querySelectorAll('.thumb-container').forEach((container, idx) => {
         container.classList.toggle('active', idx === state.currentSlideIndex);
         container.classList.toggle('selected', selectedSet.has(idx));
+    });
+}
+
+function reorderSlides(movingIndices, targetIndex, placeAfter) {
+    const movingSet = new Set(movingIndices);
+    const movingSlides = movingIndices.map(idx => state.slides[idx]).filter(Boolean);
+    if (movingSlides.length === 0) return false;
+
+    const remainingSlides = [];
+    const remainingOrigIndices = [];
+    state.slides.forEach((s, idx) => {
+        if (!movingSet.has(idx)) {
+            remainingSlides.push(s);
+            remainingOrigIndices.push(idx);
+        }
+    });
+
+    // Compute insertion index in `remainingSlides`
+    let insertPos = remainingSlides.length;
+    if (targetIndex >= 0 && targetIndex < state.slides.length) {
+        if (movingSet.has(targetIndex)) {
+            // Find nearest non-moving slide around targetIndex
+            let found = -1;
+            if (placeAfter) {
+                for (let i = targetIndex + 1; i < state.slides.length; i++) {
+                    if (!movingSet.has(i)) {
+                        found = remainingOrigIndices.indexOf(i);
+                        break;
+                    }
+                }
+                insertPos = found !== -1 ? found : remainingSlides.length;
+            } else {
+                for (let i = targetIndex - 1; i >= 0; i--) {
+                    if (!movingSet.has(i)) {
+                        found = remainingOrigIndices.indexOf(i) + 1;
+                        break;
+                    }
+                }
+                insertPos = found !== -1 ? found : 0;
+            }
+        } else {
+            const remIdx = remainingOrigIndices.indexOf(targetIndex);
+            insertPos = placeAfter ? remIdx + 1 : remIdx;
+        }
+    }
+
+    const nextSlides = [
+        ...remainingSlides.slice(0, insertPos),
+        ...movingSlides,
+        ...remainingSlides.slice(insertPos),
+    ];
+
+    // Detect whether order actually changed
+    const unchanged = nextSlides.length === state.slides.length
+        && nextSlides.every((s, idx) => s === state.slides[idx]);
+    if (unchanged) return false;
+
+    const activeSlideObj = state.slides[state.currentSlideIndex];
+    state.slides = nextSlides;
+
+    const newSelectedIndices = movingSlides.map(s => state.slides.indexOf(s)).filter(i => i !== -1);
+    const newActiveIdx = activeSlideObj ? state.slides.indexOf(activeSlideObj) : 0;
+    state.currentSlideIndex = newActiveIdx !== -1 ? newActiveIdx : (newSelectedIndices[0] ?? 0);
+    setSelectedSlideIndices(newSelectedIndices);
+    setSelectedElementIndices([], null);
+
+    markDirty();
+    renderEditor();
+    flashSaveIndicator(movingSlides.length > 1 ? `${movingSlides.length} slides reordered ✓` : 'Slide reordered ✓');
+    return true;
+}
+
+function attachSlideDragReorder(container, idx, thumbList) {
+    container.addEventListener('mousedown', (e) => {
+        if (e.button !== 0) return;
+        const multiToggle = e.ctrlKey || e.metaKey;
+        const startX = e.clientX;
+        const startY = e.clientY;
+        let isDragging = false;
+        let dropTargetIdx = null;
+        let dropAfter = false;
+
+        const containers = () => [...thumbList.querySelectorAll('.thumb-container')];
+
+        const clearIndicators = () => {
+            containers().forEach(c => {
+                c.classList.remove('dragging', 'drop-before', 'drop-after');
+            });
+        };
+
+        const computeDropTarget = (clientY) => {
+            const list = containers();
+            for (let i = 0; i < list.length; i++) {
+                const rect = list[i].getBoundingClientRect();
+                const midY = rect.top + rect.height / 2;
+                if (clientY < midY) {
+                    return { targetIdx: i, after: false };
+                }
+            }
+            return { targetIdx: list.length - 1, after: true };
+        };
+
+        const onMouseMove = (moveEvent) => {
+            const dist = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
+            if (!isDragging && dist >= SLIDE_DRAG_THRESHOLD_PX) {
+                isDragging = true;
+
+                // Ensure dragged slide is in selection (unless Ctrl-toggling)
+                let currentSel = getSelectedSlideIndices();
+                if (!multiToggle && !currentSel.includes(idx)) {
+                    state.currentSlideIndex = idx;
+                    setSelectedSlideIndices([idx]);
+                    setSelectedElementIndices([], null);
+                    updateSlideThumbSelectionUI();
+                }
+
+                const activeSel = new Set(getSelectedSlideIndices());
+                containers().forEach((c, cIdx) => {
+                    if (activeSel.has(cIdx)) c.classList.add('dragging');
+                });
+            }
+
+            if (!isDragging) return;
+
+            const info = computeDropTarget(moveEvent.clientY);
+            dropTargetIdx = info.targetIdx;
+            dropAfter = info.after;
+
+            containers().forEach((c, cIdx) => {
+                c.classList.remove('drop-before', 'drop-after');
+                if (cIdx === dropTargetIdx) {
+                    c.classList.add(dropAfter ? 'drop-after' : 'drop-before');
+                }
+            });
+        };
+
+        const onMouseUp = (upEvent) => {
+            window.removeEventListener('mousemove', onMouseMove);
+            window.removeEventListener('mouseup', onMouseUp);
+
+            const wasDragging = isDragging;
+            const finalTarget = dropTargetIdx;
+            const finalAfter = dropAfter;
+            clearIndicators();
+
+            if (wasDragging) {
+                // Suppress the subsequent click event from overriding selection
+                const suppressClick = (clickEvt) => {
+                    clickEvt.stopPropagation();
+                    clickEvt.preventDefault();
+                };
+                container.addEventListener('click', suppressClick, { capture: true, once: true });
+                setTimeout(() => container.removeEventListener('click', suppressClick, { capture: true }), 0);
+
+                if (finalTarget !== null) {
+                    const movingIndices = getSelectedSlideIndices();
+                    reorderSlides(movingIndices, finalTarget, finalAfter);
+                }
+                return;
+            }
+
+            // Normal click / Ctrl+click selection
+            if (multiToggle) {
+                toggleSlideSelection(idx);
+            } else if (upEvent.button === 0) {
+                selectSlide(idx);
+            }
+        };
+
+        window.addEventListener('mousemove', onMouseMove);
+        window.addEventListener('mouseup', onMouseUp);
     });
 }
 
@@ -465,13 +639,7 @@ export function renderEditor() {
     state.slides.forEach((slide, idx) => {
         const container = document.createElement('div');
         container.className = `thumb-container ${idx === state.currentSlideIndex ? 'active' : ''} ${selectedSlideSet.has(idx) ? 'selected' : ''}`;
-        container.onclick = (e) => {
-            if (e.ctrlKey || e.metaKey) {
-                toggleSlideSelection(idx);
-            } else {
-                selectSlide(idx);
-            }
-        };
+        attachSlideDragReorder(container, idx, thumbList);
 
         const labelRow = document.createElement('div');
         labelRow.className = 'thumb-label-row';

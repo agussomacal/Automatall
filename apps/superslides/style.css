@@ -242,13 +242,45 @@ body {
     display: flex;
     flex-direction: column;
     gap: 12px;
+    position: relative;
 }
 
 .thumb-container {
     display: flex;
     flex-direction: column;
     gap: 4px;
-    cursor: pointer;
+    cursor: grab;
+    position: relative;
+    user-select: none;
+}
+
+.thumb-container:active {
+    cursor: grabbing;
+}
+
+.thumb-container.dragging {
+    opacity: 0.45;
+}
+
+.thumb-container.drop-before::before,
+.thumb-container.drop-after::after {
+    content: "";
+    position: absolute;
+    left: 0;
+    right: 0;
+    height: 3px;
+    background: var(--accent-color);
+    border-radius: 2px;
+    box-shadow: 0 0 8px rgba(59, 130, 246, 0.8);
+    z-index: 10;
+}
+
+.thumb-container.drop-before::before {
+    top: -7px;
+}
+
+.thumb-container.drop-after::after {
+    bottom: -7px;
 }
 
 .thumb-label-row {
@@ -555,6 +587,27 @@ body {
 
 .prop-control:focus {
     border-color: var(--accent-color);
+}
+
+.prop-control.prop-color {
+    height: 34px;
+    padding: 2px;
+}
+
+.prop-control.prop-readonly {
+    opacity: 0.65;
+}
+
+.prop-hint {
+    font-size: 12px;
+    color: var(--text-muted);
+    line-height: 1.4;
+}
+
+.prop-divider {
+    border-top: 1px solid var(--border-color);
+    padding-top: 12px;
+    margin-top: 4px;
 }
 
 select.prop-control option {
