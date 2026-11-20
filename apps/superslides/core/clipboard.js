@@ -1,6 +1,7 @@
 // ============================================================
-// core/clipboard.js — Keyboard shortcuts for multi-selection,
-// arrow movement, cut/copy/paste, deletion, and undo/redo.
+// core/clipboard.js — Keyboard shortcuts for slide navigation,
+// multi-selection, arrow movement, cut/copy/paste, deletion,
+// and undo/redo.
 // ============================================================
 
 import {
@@ -19,6 +20,7 @@ import {
     deleteSelectedElements,
     deleteSelectedSlides,
     extendSlideSelectionByArrow,
+    navigateSlideByArrow,
     moveSelectedElementsByArrow,
 } from '../editor/editor.js';
 import {
@@ -117,10 +119,17 @@ export function initKeyboardShortcuts() {
             return;
         }
 
-        // 0d. Plain Arrow keys — move selected object(s) together
+        // 0d. Plain Arrow keys — move selected object(s) if any are selected, otherwise navigate slides
         if (!hasCtrlOrCmd && !e.shiftKey && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
             if (getSelectedElementIndices().length > 0) {
                 if (moveSelectedElementsByArrow(e.key, e.altKey)) {
+                    e.preventDefault();
+                }
+                return;
+            }
+            if (!e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown' || e.key === 'ArrowLeft' || e.key === 'ArrowRight')) {
+                const delta = (e.key === 'ArrowUp' || e.key === 'ArrowLeft') ? -1 : 1;
+                if (navigateSlideByArrow(delta)) {
                     e.preventDefault();
                 }
             }

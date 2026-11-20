@@ -28,21 +28,20 @@ import { saveAndExitTextEditing } from '../elements/text/text.js';
 
 const SLIDE_DRAG_THRESHOLD_PX = 5;
 
-// ---------- Toolbar (built from the registry) ----------
+// ---------- Toolbar (built from the registry, left-to-right) ----------
 
 export function renderToolbarButtons() {
     const container = document.querySelector('.editor-toolbar');
     if (!container) return;
     container.querySelectorAll('[data-role="add-element"]').forEach(n => n.remove());
 
-    const anchor = container.querySelector('button:not([data-role])');
     ElementRegistry.types().forEach(def => {
         const btn = document.createElement('button');
         btn.className = 'toolbar-btn';
         btn.setAttribute('data-role', 'add-element');
         btn.onclick = () => addElement(def.type);
         btn.innerHTML = `<span>${def.icon}</span> ${escapeHtml(def.label)}`;
-        container.insertBefore(btn, anchor);
+        container.appendChild(btn);
     });
 }
 
@@ -188,6 +187,34 @@ export function updateThumbnailLive() {
     state.slides[state.currentSlideIndex].elements.forEach(el => {
         scaler.appendChild(buildThumbElement(el));
     });
+}
+
+function updateSlideTitleInput() {
+    const input = document.getElementById('slide-title-input');
+    if (!input) return;
+    const slide = state.slides[state.currentSlideIndex];
+    const desired = slide ? (slide.title || '') : '';
+    if (document.activeElement !== input && input.value !== desired) {
+        input.value = desired;
+    }
+}
+
+function updateThumbLabels() {
+    document.querySelectorAll('.thumb-container').forEach((container, idx) => {
+        const slide = state.slides[idx];
+        const labelRow = container.querySelector('.thumb-label-row');
+        if (slide && labelRow) {
+            labelRow.innerHTML = `<span>${escapeHtml(slide.title)}</span><span>${idx + 1}</span>`;
+        }
+    });
+}
+
+export function renameCurrentSlide(value) {
+    const slide = state.slides[state.currentSlideIndex];
+    if (!slide) return;
+    slide.title = value;
+    markDirty();
+    updateThumbLabels();
 }
 
 // ---------- Canvas ----------
@@ -468,11 +495,9 @@ function reorderSlides(movingIndices, targetIndex, placeAfter) {
         }
     });
 
-    // Compute insertion index in `remainingSlides`
     let insertPos = remainingSlides.length;
     if (targetIndex >= 0 && targetIndex < state.slides.length) {
         if (movingSet.has(targetIndex)) {
-            // Find nearest non-moving slide around targetIndex
             let found = -1;
             if (placeAfter) {
                 for (let i = targetIndex + 1; i < state.slides.length; i++) {
@@ -503,7 +528,6 @@ function reorderSlides(movingIndices, targetIndex, placeAfter) {
         ...remainingSlides.slice(insertPos),
     ];
 
-    // Detect whether order actually changed
     const unchanged = nextSlides.length === state.slides.length
         && nextSlides.every((s, idx) => s === state.slides[idx]);
     if (unchanged) return false;
@@ -558,7 +582,6 @@ function attachSlideDragReorder(container, idx, thumbList) {
             if (!isDragging && dist >= SLIDE_DRAG_THRESHOLD_PX) {
                 isDragging = true;
 
-                // Ensure dragged slide is in selection (unless Ctrl-toggling)
                 let currentSel = getSelectedSlideIndices();
                 if (!multiToggle && !currentSel.includes(idx)) {
                     state.currentSlideIndex = idx;
@@ -597,7 +620,6 @@ function attachSlideDragReorder(container, idx, thumbList) {
             clearIndicators();
 
             if (wasDragging) {
-                // Suppress the subsequent click event from overriding selection
                 const suppressClick = (clickEvt) => {
                     clickEvt.stopPropagation();
                     clickEvt.preventDefault();
@@ -612,7 +634,6 @@ function attachSlideDragReorder(container, idx, thumbList) {
                 return;
             }
 
-            // Normal click / Ctrl+click selection
             if (multiToggle) {
                 toggleSlideSelection(idx);
             } else if (upEvent.button === 0) {
@@ -625,11 +646,25 @@ function attachSlideDragReorder(container, idx, thumbList) {
     });
 }
 
+function syncToolbarSelectsNow() {
+    const gridSel = document.getElementById('grid-size-select');
+    if (gridSel) {
+        gridSel.value = String(state.gridSize ?? 20);
+    }
+    const sizeSel = document.getElementById('global-slide-size');
+    if (sizeSel) {
+        const key = `${state.slideWidth}x${state.slideHeight}`;
+        sizeSel.value = ['1920x1080', '960x540', '1280x960'].includes(key) ? key : 'custom';
+    }
+}
+
 export function renderEditor() {
     updateDimensionsCSS();
+    renderToolbarButtons();
     syncGridSizeSelect();
     syncSlideSizeSelect();
-    renderToolbarButtons();
+    syncToolbarSelectsNow();
+    updateSlideTitleInput();
 
     const thumbList = document.getElementById('slides-thumb-list');
     thumbList.innerHTML = '';
@@ -671,6 +706,7 @@ export function renderEditor() {
 
     renderCanvas();
     renderPropertiesPanel();
+    syncToolbarSelectsNow();
 }
 
 // ---------- Slide operations ----------
@@ -692,6 +728,14 @@ export function selectSlide(index) {
     setSelectedSlideIndices([index]);
     setSelectedElementIndices([], null);
     renderEditor();
+}
+
+export function navigateSlideByArrow(delta) {
+    if (!Array.isArray(state.slides) || state.slides.length === 0) return false;
+    const nextIdx = Math.max(0, Math.min(state.slides.length - 1, state.currentSlideIndex + delta));
+    if (nextIdx === state.currentSlideIndex) return true;
+    selectSlide(nextIdx);
+    return true;
 }
 
 export function toggleSlideSelection(index) {
@@ -729,7 +773,6 @@ export function extendSlideSelectionByArrow(delta) {
 }
 
 export function deleteSelectedSlides(showFlash = true) {
-    // Only allowed when no element on the current slide is active/selected
     if (getSelectedElementIndices().length > 0) return false;
 
     const toDelete = getSelectedSlideIndices();

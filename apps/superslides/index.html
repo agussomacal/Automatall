@@ -79,33 +79,39 @@
 
 <div id="editor-view" class="view">
     <div class="slides-sidebar">
-        <div class="sidebar-header">
-            <h3>Project Slides</h3>
-            <span class="save-indicator" id="save-indicator">Saved ✓</span>
-            <button class="toolbar-btn" title="View HTML export" onclick="directExport('html')"
-                    style="padding: 6px 10px; min-width: auto; display: inline-flex; align-items: center; gap: 4px;">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-                     stroke-linecap="round" stroke-linejoin="round">
-                    <polyline points="16 18 22 12 16 6"></polyline>
-                    <polyline points="8 6 2 12 8 18"></polyline>
-                </svg>
-                HTML
-            </button>
-            <button class="toolbar-btn" title="View PDF export" onclick="directExport('pdf')"
-                    style="padding: 6px 10px; min-width: auto; display: inline-flex; align-items: center; gap: 4px;">
-                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
-                     stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
-                    <polyline points="14 2 14 8 20 8"></polyline>
-                    <line x1="16" y1="13" x2="8" y2="13"></line>
-                    <line x1="16" y1="17" x2="8" y2="17"></line>
-                </svg>
-                PDF
-            </button>
+        <div class="sidebar-top">
+            <div class="sidebar-header">
+                <h3>Slide Name</h3>
+                <span class="save-indicator" id="save-indicator">Saved ✓</span>
+            </div>
+            <div class="slide-title-box">
+                <input type="text" class="slide-title-input" id="slide-title-input"
+                       placeholder="Slide Title" oninput="renameCurrentSlide(this.value)">
+            </div>
         </div>
         <div class="slides-thumb-list" id="slides-thumb-list"></div>
 
         <div class="sidebar-footer">
+            <div class="export-pair-row">
+                <button class="toolbar-btn export-half-btn" title="Export HTML" onclick="directExport('html')">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                         stroke-linecap="round" stroke-linejoin="round">
+                        <polyline points="16 18 22 12 16 6"></polyline>
+                        <polyline points="8 6 2 12 8 18"></polyline>
+                    </svg>
+                    HTML
+                </button>
+                <button class="toolbar-btn export-half-btn" title="Export PDF" onclick="directExport('pdf')">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"
+                         stroke-linecap="round" stroke-linejoin="round">
+                        <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"></path>
+                        <polyline points="14 2 14 8 20 8"></polyline>
+                        <line x1="16" y1="13" x2="8" y2="13"></line>
+                        <line x1="16" y1="17" x2="8" y2="17"></line>
+                    </svg>
+                    PDF
+                </button>
+            </div>
             <button class="toolbar-btn" id="theme-toggle-btn" onclick="toggleDarkMode()"
                     style="width: 100%; justify-content: center;">
                 <span>🌙</span> Night Mode
@@ -121,28 +127,7 @@
 
     <div class="workspace-container">
         <div class="editor-toolbar" id="editor-toolbar">
-            <!-- Dynamic plugin toolbar buttons rendered cleanly here to avoid duplication -->
-            <div style="margin-left: auto; display: flex; align-items: center; gap: 8px;">
-                <input type="text" class="project-title-input" id="project-title-input"
-                       placeholder="Untitled Project" oninput="renameProject(this.value)">
-                <label style="font-size: 12px; color: var(--text-muted);">Grid Size:</label>
-                <select id="grid-size-select" class="prop-control" style="width: 110px;"
-                        onchange="changeGridSize(this.value)">
-                    <option value="0">None</option>
-                    <option value="10">10px (Fine)</option>
-                    <option value="20" selected>20px (Normal)</option>
-                    <option value="40">40px (Coarse)</option>
-                    <option value="80">80px (Wide)</option>
-                </select>
-                <label style="font-size: 12px; color: var(--text-muted);">Slide Size:</label>
-                <select id="global-slide-size" class="prop-control" style="width: 140px;"
-                        onchange="changeSlideSizePreset(this.value)">
-                    <option value="1920x1080" selected>16:9 Full HD (1920x1080)</option>
-                    <option value="960x540">16:9 Standard (960x540)</option>
-                    <option value="1280x960">4:3 Standard (1280x960)</option>
-                    <option value="custom">Custom Size...</option>
-                </select>
-            </div>
+            <!-- Dynamic plugin toolbar buttons inserted left-to-right here -->
         </div>
 
         <div class="workspace" id="workspace-area">
@@ -151,6 +136,29 @@
     </div>
 
     <div class="properties-sidebar">
+        <div class="slide-settings-bar">
+            <div class="toolbar-field">
+                <label for="grid-size-select">Grid</label>
+                <select id="grid-size-select" class="toolbar-select"
+                        onchange="changeGridSize(this.value)">
+                    <option value="0">None</option>
+                    <option value="10">10px</option>
+                    <option value="20" selected>20px</option>
+                    <option value="40">40px</option>
+                    <option value="80">80px</option>
+                </select>
+            </div>
+            <div class="toolbar-field">
+                <label for="global-slide-size">Size</label>
+                <select id="global-slide-size" class="toolbar-select toolbar-select-size"
+                        onchange="changeSlideSizePreset(this.value)">
+                    <option value="1920x1080" selected>1920×1080</option>
+                    <option value="960x540">960×540</option>
+                    <option value="1280x960">1280×960</option>
+                    <option value="custom">Custom...</option>
+                </select>
+            </div>
+        </div>
         <div class="properties-header">Properties</div>
         <div class="properties-body" id="properties-body">
             <div class="no-selection">Select an object on the canvas to inspect and customize its properties.</div>

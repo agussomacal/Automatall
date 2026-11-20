@@ -206,19 +206,48 @@ body {
     border-right: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
+    height: 100vh;
+    flex-shrink: 0;
+}
+
+.sidebar-top {
+    border-bottom: 1px solid var(--border-color);
 }
 
 .sidebar-header {
-    padding: 16px;
-    border-bottom: 1px solid var(--border-color);
+    padding: 12px 16px 8px;
     display: flex;
     justify-content: space-between;
     align-items: center;
 }
 
 .sidebar-header h3 {
-    font-size: 14px;
+    font-size: 13px;
     font-weight: 600;
+}
+
+.slide-title-box {
+    padding: 0 16px 12px;
+}
+
+.slide-title-input {
+    width: 100%;
+    background: #060a13;
+    border: 1px solid #475569;
+    color: #cbd5e1;
+    font-size: 13px;
+    font-weight: 500;
+    padding: 7px 10px;
+    border-radius: 6px;
+    outline: none;
+    transition: border-color 0.2s, background 0.2s, color 0.2s;
+}
+
+.slide-title-input:hover,
+.slide-title-input:focus {
+    background: #09101f;
+    border-color: var(--accent-color);
+    color: #e2e8f0;
 }
 
 .save-indicator {
@@ -365,47 +394,16 @@ body {
     gap: 8px;
 }
 
-.export-dropdown {
-    position: relative;
-    display: inline-block;
-    width: 100%;
-}
-
-.export-menu {
-    display: none;
-    position: absolute;
-    bottom: 100%;
-    left: 0;
-    right: 0;
-    margin-bottom: 4px;
-    background-color: var(--panel-bg);
-    border: 1px solid var(--border-color);
-    border-radius: 6px;
-    box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.3);
-    z-index: 50;
-    overflow: hidden;
-}
-
-.export-menu.show {
-    display: block;
-}
-
-.export-menu-item {
-    padding: 10px 12px;
-    font-size: 12px;
-    color: var(--text-main);
-    cursor: pointer;
+.export-pair-row {
     display: flex;
-    align-items: center;
     gap: 8px;
-    background: transparent;
-    border: none;
     width: 100%;
-    text-align: left;
 }
 
-.export-menu-item:hover {
-    background: rgba(255, 255, 255, 0.08);
+.export-half-btn {
+    flex: 1;
+    justify-content: center;
+    padding: 8px 10px;
 }
 
 .sidebar-btn {
@@ -436,6 +434,7 @@ body {
     background-color: #090d16;
     height: 100vh;
     overflow: hidden;
+    min-width: 0;
 }
 
 .editor-toolbar {
@@ -444,46 +443,35 @@ body {
     border-bottom: 1px solid var(--border-color);
     display: flex;
     align-items: center;
-    padding: 0 24px;
-    gap: 12px;
+    justify-content: flex-start;
+    padding: 0 20px;
+    gap: 10px;
+    flex-shrink: 0;
+    overflow-x: auto;
 }
 
 .toolbar-btn {
+    height: 36px;
     background-color: rgba(255, 255, 255, 0.05);
     border: 1px solid var(--border-color);
     color: var(--text-main);
-    padding: 8px 14px;
+    padding: 0 14px;
     border-radius: 6px;
     font-size: 13px;
     font-weight: 500;
     cursor: pointer;
-    display: flex;
+    display: inline-flex;
     align-items: center;
+    justify-content: center;
     gap: 6px;
+    line-height: 1;
     transition: all 0.2s;
+    white-space: nowrap;
 }
 
 .toolbar-btn:hover {
     background-color: rgba(255, 255, 255, 0.1);
     border-color: var(--accent-color);
-}
-
-.project-title-input {
-    background: transparent;
-    border: 1px solid transparent;
-    color: var(--text-main);
-    font-size: 15px;
-    font-weight: 600;
-    padding: 6px 10px;
-    border-radius: 6px;
-    outline: none;
-    width: 220px;
-}
-
-.project-title-input:hover,
-.project-title-input:focus {
-    background: rgba(255, 255, 255, 0.06);
-    border-color: var(--border-color);
 }
 
 .workspace {
@@ -494,6 +482,7 @@ body {
     position: relative;
     padding: 40px;
     overflow: auto;
+    min-width: 0;
 }
 
 .slide-canvas {
@@ -530,11 +519,77 @@ body {
 
 .properties-sidebar {
     width: 280px;
+    min-width: 280px;
+    max-width: 280px;
     background-color: var(--panel-bg);
     border-left: 1px solid var(--border-color);
     display: flex;
     flex-direction: column;
     overflow-y: auto;
+    flex-shrink: 0;
+}
+
+.slide-settings-bar {
+    height: 60px;
+    padding: 0 12px;
+    border-bottom: 1px solid var(--border-color);
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+    background-color: #162032;
+    flex-shrink: 0;
+}
+
+.toolbar-field {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    min-width: 0;
+}
+
+.toolbar-field label {
+    font-size: 11px;
+    color: #93c5fd;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+select.toolbar-select {
+    -webkit-appearance: none;
+    appearance: none;
+    width: 78px;
+    height: 30px;
+    background-color: #050911;
+    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24' fill='none' stroke='%2393c5fd' stroke-width='2.5' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+    background-repeat: no-repeat;
+    background-position: right 6px center;
+    color: #e2e8f0;
+    border: 1px solid #475569;
+    border-radius: 6px;
+    padding: 0 20px 0 7px;
+    font-size: 11.5px;
+    font-weight: 600;
+    line-height: 28px;
+    outline: none;
+    cursor: pointer;
+    transition: border-color 0.2s, background-color 0.2s, color 0.2s;
+}
+
+select.toolbar-select.toolbar-select-size {
+    width: 108px;
+}
+
+select.toolbar-select:hover,
+select.toolbar-select:focus {
+    background-color: #091120;
+    border-color: var(--accent-color);
+    color: #f8fafc;
+}
+
+select.toolbar-select option {
+    background-color: #050911;
+    color: #e2e8f0;
 }
 
 .properties-header {
@@ -575,9 +630,9 @@ body {
 }
 
 .prop-control {
-    background: rgba(255, 255, 255, 0.05);
+    background: #060a13;
     border: 1px solid var(--border-color);
-    color: var(--text-main);
+    color: #e2e8f0;
     padding: 6px 10px;
     border-radius: 6px;
     font-size: 13px;
@@ -595,7 +650,7 @@ body {
 }
 
 .prop-control.prop-readonly {
-    opacity: 0.65;
+    opacity: 0.7;
 }
 
 .prop-hint {
@@ -611,8 +666,8 @@ body {
 }
 
 select.prop-control option {
-    background-color: var(--panel-bg);
-    color: var(--text-main);
+    background-color: #060a13;
+    color: #e2e8f0;
 }
 
 .no-selection {

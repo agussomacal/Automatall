@@ -21,7 +21,7 @@ import './elements/index.js';
 
 // Editor + export modules.
 import {
-    renderEditor, addElement, addSlide, selectSlide, updateThumbnailLive,
+    renderEditor, addElement, addSlide, selectSlide, renameCurrentSlide, updateThumbnailLive,
 } from './editor/editor.js';
 import {projectExportHtml, projectExportPdf} from './export/index.js';
 
@@ -120,8 +120,6 @@ function startProject(name, path, folder) {
     setSelectedSlideIndices([0]);
     setSelectedElementIndices([], null);
 
-    const titleInput = document.getElementById('project-title-input');
-    if (titleInput) titleInput.value = state.projectName;
     if (path) addRecent(state.projectName, path);
 
     state.lastSnapshot = currentSnapshot();
@@ -174,9 +172,6 @@ async function openProjectByPath(path, content) {
         syncSlideSizeSelect();
         syncGridSizeSelect();
         updateDimensionsCSS();
-
-        const titleInput = document.getElementById('project-title-input');
-        if (titleInput) titleInput.value = state.projectName;
 
         await loadProjectMacrosFromDisk();
 
@@ -233,8 +228,6 @@ function openSampleProject() {
     state.lastSnapshot = currentSnapshot();
     state.isDirty = false;
     resetHistory();
-    const titleInput = document.getElementById('project-title-input');
-    if (titleInput) titleInput.value = state.projectName;
     showView('editor-view');
     renderEditor();
 }
@@ -388,7 +381,7 @@ Object.assign(window, {
     showView, showNewProjectModal, closeNewProjectModal,
     validateNewProjectForm, chooseNewProjectFolder, confirmCreateProject,
     openProjectFromFile, openProjectByPath, openSampleProject, goToHome,
-    renderEditor, addElement, addSlide, selectSlide, updateThumbnailLive,
+    renderEditor, addElement, addSlide, selectSlide, renameCurrentSlide, updateThumbnailLive,
     toggleDarkMode, changeGridSize, changeSlideSizePreset,
     renameProject,
     openMacrosModal, closeMacrosModal, saveMacros,
