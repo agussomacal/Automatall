@@ -6,6 +6,7 @@ import {
     state, pyApi, parseTexMacros, resetMacros, markDirty,
     startAutosave, flushPendingSave, renameProject, flashSaveIndicator,
     serializeProject, deserializeProject, currentSnapshot,
+    setSelectedElementIndices, setSelectedSlideIndices,
     DEFAULT_TEX_MACROS,
 } from './core/state.js';
 import {ElementRegistry} from './core/registry.js';
@@ -62,7 +63,6 @@ function renderRecents() {
     if (!ul) return;
     ul.innerHTML = '';
 
-    // Ensure recents is always an array
     if (!Array.isArray(state.recents)) {
         state.recents = [];
     }
@@ -117,7 +117,8 @@ function startProject(name, path, folder) {
 
     state.slides = [{id: 1, title: 'Title Slide', elements: []}];
     state.currentSlideIndex = 0;
-    state.selectedElementIndex = null;
+    setSelectedSlideIndices([0]);
+    setSelectedElementIndices([], null);
 
     const titleInput = document.getElementById('project-title-input');
     if (titleInput) titleInput.value = state.projectName;
@@ -225,7 +226,8 @@ function openSampleProject() {
         }],
     }];
     state.currentSlideIndex = 0;
-    state.selectedElementIndex = null;
+    setSelectedSlideIndices([0]);
+    setSelectedElementIndices([], null);
     const titleInput = document.getElementById('project-title-input');
     if (titleInput) titleInput.value = state.projectName;
     showView('editor-view');
@@ -235,7 +237,7 @@ function openSampleProject() {
 async function goToHome() {
     await flushPendingSave();
     showView('welcome-view');
-    initRecents(); // Refresh recents list when returning home
+    initRecents();
 }
 
 // ---------- New-project modal ----------
@@ -404,12 +406,9 @@ initKeyboardShortcuts();
 
 window.addEventListener('beforeunload', flushPendingSave);
 
-// Robust initialization for pywebview vs browser preview
 if (window.pywebview) {
-    // If pywebview is already ready, run immediately; otherwise wait for the event
     initRecents();
 } else {
     window.addEventListener('pywebviewready', initRecents);
-    // Browser preview fallback if not running inside pywebview
     setTimeout(initRecents, 100);
 }

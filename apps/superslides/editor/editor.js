@@ -1,13 +1,18 @@
 // ============================================================
-// editor/editor.js — The editor manager (FINAL version).
-// Changes vs the earlier draft:
-//  - listens for 'slide-content-changed' (full re-render) and
-//    'slide-thumbnail-changed' (thumbnail only) events dispatched
-//    by element modules, so elements never import this file.
-//  - renderToolbarButtons() no longer wipes static toolbar content.
+// editor/editor.js — The editor manager.
+// Supports single & multi-selection for both slides and elements,
+// group dragging & arrow-key nudging, cut/copy/paste, and deletion.
 // ============================================================
 
-import { state, markDirty } from '../core/state.js';
+import {
+    state,
+    markDirty,
+    flashSaveIndicator,
+    getSelectedElementIndices,
+    setSelectedElementIndices,
+    getSelectedSlideIndices,
+    setSelectedSlideIndices,
+} from '../core/state.js';
 import { ElementRegistry } from '../core/registry.js';
 import {
     applyCommonBoxStyles,
@@ -17,7 +22,7 @@ import {
     syncGridSizeSelect,
     escapeHtml,
 } from '../core/render.js';
-import { startDragOrResize, updateResizeCursor, gridSteps } from '../core/geometry.js';
+import { startDragOrResize, updateResizeCursor, gridSteps, snapToGridPoint } from '../core/geometry.js';
 import { saveAndExitTextEditing } from '../elements/text/text.js';
 
 // ---------- Toolbar (built from the registry) ----------
@@ -25,7 +30,6 @@ import { saveAndExitTextEditing } from '../elements/text/text.js';
 export function renderToolbarButtons() {
     const container = document.querySelector('.editor-toolbar');
     if (!container) return;
-    // Remove only previously generated buttons, keep static controls.
     container.querySelectorAll('[data-role="add-element"]').forEach(n => n.remove());
 
     const anchor = container.querySelector('button:not([data-role])');
@@ -59,20 +63,39 @@ export function addElement(type) {
     };
 
     slide.elements.push(el);
-    state.selectedElementIndex = slide.elements.length - 1;
+    setSelectedElementIndices([slide.elements.length - 1], slide.elements.length - 1);
+    setSelectedSlideIndices([state.currentSlideIndex]);
     markDirty();
     renderEditor();
 }
 
 function updateProp(propName, value) {
     const slide = state.slides[state.currentSlideIndex];
-    if (state.selectedElementIndex === null || !slide) return;
-    const el = slide.elements[state.selectedElementIndex];
+    const indices = getSelectedElementIndices();
+    if (indices.length === 0 || !slide) return;
 
-    if (['x', 'y', 'width', 'height', 'fontSize', 'borderWidth'].includes(propName)) {
-        el[propName] = Number(value);
+    const numericProps = ['x', 'y', 'width', 'height', 'fontSize', 'borderWidth'];
+    const parsedVal = numericProps.includes(propName) ? Number(value) : value;
+
+    const primaryIdx = (state.selectedElementIndex !== null && indices.includes(state.selectedElementIndex))
+        ? state.selectedElementIndex
+        : indices[0];
+    const primaryEl = slide.elements[primaryIdx];
+    const prevVal = primaryEl ? primaryEl[propName] : undefined;
+
+    if (propName === 'x' || propName === 'y') {
+        const delta = Number(parsedVal) - Number(prevVal);
+        indices.forEach(idx => {
+            if (slide.elements[idx]) {
+                slide.elements[idx][propName] = Number(slide.elements[idx][propName]) + delta;
+            }
+        });
     } else {
-        el[propName] = value;
+        indices.forEach(idx => {
+            if (slide.elements[idx]) {
+                slide.elements[idx][propName] = parsedVal;
+            }
+        });
     }
 
     markDirty();
@@ -80,6 +103,59 @@ function updateProp(propName, value) {
     updateThumbnailLive();
 }
 window.updateProp = updateProp;
+
+export function moveSelectedElementsByArrow(key, altKey = false) {
+    const slide = state.slides[state.currentSlideIndex];
+    const indices = getSelectedElementIndices();
+    if (!slide || indices.length === 0) return false;
+
+    const { stepX, stepY } = gridSteps();
+    const baseStepX = altKey ? 1 : (state.gridSize > 0 ? stepX : 10);
+    const baseStepY = altKey ? 1 : (state.gridSize > 0 ? stepY : 10);
+
+    let dx = 0;
+    let dy = 0;
+    if (key === 'ArrowLeft') dx = -baseStepX;
+    else if (key === 'ArrowRight') dx = baseStepX;
+    else if (key === 'ArrowUp') dy = -baseStepY;
+    else if (key === 'ArrowDown') dy = baseStepY;
+    else return false;
+
+    indices.forEach(idx => {
+        const el = slide.elements[idx];
+        if (!el) return;
+        let nextX = el.x + dx;
+        let nextY = el.y + dy;
+        if (!altKey && state.gridSize > 0) {
+            nextX = snapToGridPoint(nextX, stepX);
+            nextY = snapToGridPoint(nextY, stepY);
+        }
+        el.x = nextX;
+        el.y = nextY;
+    });
+
+    markDirty();
+    renderCanvas();
+    renderPropertiesPanel();
+    updateThumbnailLive();
+    return true;
+}
+
+export function deleteSelectedElements(showFlash = false) {
+    const slide = state.slides[state.currentSlideIndex];
+    const indices = getSelectedElementIndices();
+    if (!slide || indices.length === 0) return false;
+
+    const toRemove = new Set(indices);
+    slide.elements = slide.elements.filter((_, idx) => !toRemove.has(idx));
+    setSelectedElementIndices([], null);
+    markDirty();
+    renderEditor();
+    if (showFlash) {
+        flashSaveIndicator(indices.length > 1 ? `${indices.length} objects removed ✓` : 'Object removed ✓');
+    }
+    return true;
+}
 
 // ---------- Thumbnails ----------
 
@@ -117,7 +193,7 @@ function renderCanvas() {
     const canvas = document.getElementById('slide-canvas');
     canvas.innerHTML = '';
 
-    const { stepX, stepY } = gridSteps();
+    gridSteps();
 
     if (state.gridSize > 0) {
         canvas.style.backgroundImage = getGridSvgDataUri(state.slideWidth, state.slideHeight, state.gridSize, state.isDarkMode);
@@ -132,11 +208,14 @@ function renderCanvas() {
     const slide = state.slides[state.currentSlideIndex];
     if (!slide) return;
 
+    const selectedSet = new Set(getSelectedElementIndices());
+    const renderedItems = [];
+
     slide.elements.forEach((el, elIndex) => {
         const def = ElementRegistry.get(el.type);
         const domEl = document.createElement('div');
         domEl.className = `canvas-element ${def ? def.className : 'element-shape'}`;
-        if (state.selectedElementIndex === elIndex) {
+        if (selectedSet.has(elIndex)) {
             domEl.classList.add('selected');
         }
 
@@ -146,6 +225,8 @@ function renderCanvas() {
             def.renderDom(domEl, el, { context: 'canvas', elIndex });
         }
 
+        renderedItems.push({ el, domEl, elIndex });
+
         domEl.onmousemove = (e) => {
             if (domEl.classList.contains('editing-mode')) return;
             updateResizeCursor(domEl, el, e);
@@ -153,12 +234,52 @@ function renderCanvas() {
 
         domEl.onmousedown = (e) => {
             if (domEl.classList.contains('editing-mode')) return;
-            if (state.selectedElementIndex !== elIndex) {
-                state.selectedElementIndex = elIndex;
+            e.stopPropagation();
+
+            const multiToggle = e.ctrlKey || e.metaKey;
+            let currentSelected = getSelectedElementIndices();
+
+            if (multiToggle) {
+                if (currentSelected.includes(elIndex)) {
+                    currentSelected = currentSelected.filter(i => i !== elIndex);
+                    const nextPrimary = currentSelected.length > 0 ? currentSelected[currentSelected.length - 1] : null;
+                    setSelectedElementIndices(currentSelected, nextPrimary);
+                } else {
+                    setSelectedElementIndices([...currentSelected, elIndex], elIndex);
+                }
                 renderCanvas();
                 renderPropertiesPanel();
                 return;
             }
+
+            if (!currentSelected.includes(elIndex)) {
+                setSelectedElementIndices([elIndex], elIndex);
+                renderCanvas();
+                renderPropertiesPanel();
+                const freshDom = canvas.children[elIndex];
+                if (!freshDom) return;
+                startDragOrResize(freshDom, el, e, {
+                    onGeometryChanged() {
+                        const xInput = document.getElementById('prop-x');
+                        const yInput = document.getElementById('prop-y');
+                        if (xInput) xInput.value = Math.round(el.x);
+                        if (yInput) yInput.value = Math.round(el.y);
+                    },
+                    onFinish(hasDragged, isResizing) {
+                        if (hasDragged) markDirty();
+                        renderPropertiesPanel();
+                        if (hasDragged && !isResizing) {
+                            renderEditor();
+                        }
+                    },
+                });
+                return;
+            }
+
+            state.selectedElementIndex = elIndex;
+            const groupItems = renderedItems
+                .filter(item => getSelectedElementIndices().includes(item.elIndex))
+                .map(item => ({ el: item.el, domEl: item.domEl }));
 
             startDragOrResize(domEl, el, e, {
                 onGeometryChanged() {
@@ -174,20 +295,21 @@ function renderCanvas() {
                         renderEditor();
                     }
                 },
-            });
-            e.stopPropagation();
+            }, groupItems);
         };
 
         canvas.appendChild(domEl);
     });
 }
 
-// Canvas background click deselects.
+// Canvas background click clears element selection so slide is active.
 document.getElementById('slide-canvas').addEventListener('click', (e) => {
     if (e.target.id === 'slide-canvas') {
-        state.selectedElementIndex = null;
+        setSelectedElementIndices([], null);
+        setSelectedSlideIndices([state.currentSlideIndex]);
         renderCanvas();
         renderPropertiesPanel();
+        updateSlideThumbSelectionUI();
     }
 });
 
@@ -196,15 +318,13 @@ window.addEventListener('click', (e) => {
     const editingEl = document.querySelector('.canvas-element.editing-mode');
     if (editingEl && !editingEl.contains(e.target)) {
         const slide = state.slides[state.currentSlideIndex];
-        if (slide && slide.elements[state.selectedElementIndex]) {
+        if (slide && state.selectedElementIndex !== null && slide.elements[state.selectedElementIndex]) {
             saveAndExitTextEditing(editingEl, slide.elements[state.selectedElementIndex]);
         }
     }
 });
 
 // ---------- Element-module notifications (no import cycles) ----------
-// 'slide-content-changed': content/props changed materially — full re-render.
-// 'slide-thumbnail-changed': lightweight change — thumbnail only.
 document.addEventListener('slide-content-changed', () => {
     renderCanvas();
     renderPropertiesPanel();
@@ -219,13 +339,44 @@ document.addEventListener('slide-thumbnail-changed', () => {
 function renderPropertiesPanel() {
     const panelBody = document.getElementById('properties-body');
     const slide = state.slides[state.currentSlideIndex];
+    const selectedIndices = getSelectedElementIndices();
 
-    if (state.selectedElementIndex === null || !slide || !slide.elements[state.selectedElementIndex]) {
+    if (selectedIndices.length === 0 || !slide) {
         panelBody.innerHTML = `<div class="no-selection">Select an object on the canvas to inspect and customize its properties.</div>`;
         return;
     }
 
-    const el = slide.elements[state.selectedElementIndex];
+    if (selectedIndices.length > 1) {
+        const firstEl = slide.elements[selectedIndices[0]];
+        panelBody.innerHTML = `
+            <div class="prop-group">
+                <label>Selection</label>
+                <input type="text" class="prop-control" value="${selectedIndices.length} objects selected" disabled style="opacity: 0.7;">
+            </div>
+            <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">
+                Drag or use <strong>Arrow keys</strong> to move all ${selectedIndices.length} objects together, <strong>Ctrl+X / Ctrl+C / Ctrl+V</strong> to cut/copy/paste, or <strong>Delete</strong> to remove.
+            </p>
+            <div style="border-top: 1px solid var(--border-color); padding-top: 12px; margin-top: 4px;"></div>
+            <div class="prop-group">
+                <label>Background Color (All Selected)</label>
+                <input type="color" class="prop-control" value="${firstEl.bg === 'transparent' ? '#ffffff' : firstEl.bg}" style="height: 34px; padding: 2px;" oninput="updateProp('bg', this.value)">
+            </div>
+            <div class="prop-row">
+                <div class="prop-group">
+                    <label>Border Color</label>
+                    <input type="color" class="prop-control" value="${firstEl.borderCol === 'transparent' ? '#000000' : firstEl.borderCol}" style="height: 34px; padding: 2px;" oninput="updateProp('borderCol', this.value)">
+                </div>
+                <div class="prop-group">
+                    <label>Border Width</label>
+                    <input type="number" class="prop-control" min="0" max="20" value="${firstEl.borderWidth}" oninput="updateProp('borderWidth', this.value)">
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    const activeIdx = selectedIndices[0];
+    const el = slide.elements[activeIdx];
     const def = ElementRegistry.get(el.type);
     const typeLabel = def ? def.label.replace(/^Add\s+/i, '') : el.type;
 
@@ -257,7 +408,7 @@ function renderPropertiesPanel() {
     `;
 
     if (def) {
-        html += def.properties(el, state.selectedElementIndex);
+        html += def.properties(el, activeIdx);
     }
 
     html += `
@@ -290,7 +441,15 @@ function renderPropertiesPanel() {
     panelBody.innerHTML = html;
 }
 
-// ---------- Editor frame ----------
+// ---------- Thumbnails & Slide selection ----------
+
+function updateSlideThumbSelectionUI() {
+    const selectedSet = new Set(getSelectedSlideIndices());
+    document.querySelectorAll('.thumb-container').forEach((container, idx) => {
+        container.classList.toggle('active', idx === state.currentSlideIndex);
+        container.classList.toggle('selected', selectedSet.has(idx));
+    });
+}
 
 export function renderEditor() {
     updateDimensionsCSS();
@@ -301,10 +460,18 @@ export function renderEditor() {
     const thumbList = document.getElementById('slides-thumb-list');
     thumbList.innerHTML = '';
 
+    const selectedSlideSet = new Set(getSelectedSlideIndices());
+
     state.slides.forEach((slide, idx) => {
         const container = document.createElement('div');
-        container.className = `thumb-container ${idx === state.currentSlideIndex ? 'active' : ''}`;
-        container.onclick = () => selectSlide(idx);
+        container.className = `thumb-container ${idx === state.currentSlideIndex ? 'active' : ''} ${selectedSlideSet.has(idx) ? 'selected' : ''}`;
+        container.onclick = (e) => {
+            if (e.ctrlKey || e.metaKey) {
+                toggleSlideSelection(idx);
+            } else {
+                selectSlide(idx);
+            }
+        };
 
         const labelRow = document.createElement('div');
         labelRow.className = 'thumb-label-row';
@@ -343,14 +510,82 @@ export function renderEditor() {
 export function addSlide() {
     const newSlideId = state.slides.length + 1;
     state.slides.push({ id: newSlideId, title: `Slide ${newSlideId}`, elements: [] });
-    state.currentSlideIndex = state.slides.length - 1;
-    state.selectedElementIndex = null;
+    const newIdx = state.slides.length - 1;
+    state.currentSlideIndex = newIdx;
+    setSelectedSlideIndices([newIdx]);
+    setSelectedElementIndices([], null);
     markDirty();
     renderEditor();
 }
 
 export function selectSlide(index) {
+    if (index < 0 || index >= state.slides.length) return;
     state.currentSlideIndex = index;
-    state.selectedElementIndex = null;
+    setSelectedSlideIndices([index]);
+    setSelectedElementIndices([], null);
     renderEditor();
+}
+
+export function toggleSlideSelection(index) {
+    if (index < 0 || index >= state.slides.length) return;
+    let current = getSelectedSlideIndices();
+    if (current.includes(index)) {
+        if (current.length > 1) {
+            current = current.filter(i => i !== index);
+            setSelectedSlideIndices(current);
+            if (state.currentSlideIndex === index) {
+                state.currentSlideIndex = current[0];
+            }
+        }
+    } else {
+        setSelectedSlideIndices([...current, index]);
+        state.currentSlideIndex = index;
+    }
+    setSelectedElementIndices([], null);
+    renderEditor();
+}
+
+export function extendSlideSelectionByArrow(delta) {
+    if (!Array.isArray(state.slides) || state.slides.length === 0) return false;
+    const currentIdx = Math.max(0, Math.min(state.currentSlideIndex, state.slides.length - 1));
+    const nextIdx = Math.max(0, Math.min(state.slides.length - 1, currentIdx + delta));
+
+    const existing = getSelectedSlideIndices();
+    const merged = [...new Set([...existing, currentIdx, nextIdx])].sort((a, b) => a - b);
+
+    state.currentSlideIndex = nextIdx;
+    setSelectedSlideIndices(merged);
+    setSelectedElementIndices([], null);
+    renderEditor();
+    return true;
+}
+
+export function deleteSelectedSlides(showFlash = true) {
+    // Only allowed when no element on the current slide is active/selected
+    if (getSelectedElementIndices().length > 0) return false;
+
+    const toDelete = getSelectedSlideIndices();
+    if (toDelete.length === 0 || state.slides.length === 0) return false;
+
+    const removeSet = new Set(toDelete);
+    const remaining = state.slides.filter((_, idx) => !removeSet.has(idx));
+
+    if (remaining.length === 0) {
+        state.slides = [{ id: 1, title: 'Slide 1', elements: [] }];
+        state.currentSlideIndex = 0;
+        setSelectedSlideIndices([0]);
+    } else {
+        state.slides = remaining;
+        const firstDeleted = Math.min(...toDelete);
+        state.currentSlideIndex = Math.max(0, Math.min(firstDeleted, state.slides.length - 1));
+        setSelectedSlideIndices([state.currentSlideIndex]);
+    }
+
+    setSelectedElementIndices([], null);
+    markDirty();
+    renderEditor();
+    if (showFlash) {
+        flashSaveIndicator(toDelete.length > 1 ? `${toDelete.length} slides deleted ✓` : 'Slide deleted ✓');
+    }
+    return true;
 }

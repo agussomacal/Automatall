@@ -1,7 +1,9 @@
 # Roadmap
 
-* [ ] Refactoring.
-* [ ] Delete slides.
+* [x] Refactoring.
+* [x] Delete slides.
+* [x] Cut
+* [x] Group move/copy/cut/delete
 ___
 * [ ] Template elements.
 * [ ] Template slides.
@@ -10,3 +12,4 @@ ___
 ___
 * [ ] Markdown flavoured version of slides for dual modification.
 * [ ] Interactivity?
+

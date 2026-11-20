@@ -1,7 +1,5 @@
 // ============================================================
-// core/geometry.js — FINAL version. Same behavior as the draft;
-// removed the unused pasteOffset/PASTE_OFFSET_PX export (paste
-// offset lives in core/clipboard.js) so the API surface is clean.
+// core/geometry.js — Drag, resize, and multi-element group drag.
 // ============================================================
 
 import { state } from './state.js';
@@ -51,8 +49,11 @@ export function updateResizeCursor(domEl, el, mouseEvent) {
     else domEl.style.cursor = 'move';
 }
 
-/** Full drag/resize interaction for one element. */
-export function startDragOrResize(domEl, el, e, callbacks) {
+/**
+ * Full drag/resize interaction for one element or a group of selected elements.
+ * `groupItems` is an optional array of `{ el, domEl }` for all selected elements.
+ */
+export function startDragOrResize(domEl, el, e, callbacks, groupItems = null) {
     const scale = computeScale(domEl, el);
     const { stepX, stepY } = gridSteps();
 
@@ -70,6 +71,15 @@ export function startDragOrResize(domEl, el, e, callbacks) {
     const isBottom = localY > (el.height - EDGE_THRESHOLD);
     const isResizing = isLeft || isRight || isTop || isBottom;
 
+    const activeGroup = (!isResizing && Array.isArray(groupItems) && groupItems.length > 1)
+        ? groupItems.map(item => ({
+            el: item.el,
+            domEl: item.domEl,
+            origX: item.el.x,
+            origY: item.el.y,
+        }))
+        : null;
+
     function applyGeometry(newX, newY, newW, newH, useSnap) {
         if (useSnap) {
             newX = snapToGridPoint(newX, stepX);
@@ -84,6 +94,22 @@ export function startDragOrResize(domEl, el, e, callbacks) {
         domEl.style.height = `${el.height}px`;
     }
 
+    function applyGroupMove(rawDx, rawDy, useSnap) {
+        let dx = rawDx;
+        let dy = rawDy;
+        if (useSnap && state.gridSize > 0) {
+            dx = snapToGridPoint(rawDx, stepX);
+            dy = snapToGridPoint(rawDy, stepY);
+        }
+        activeGroup.forEach(item => {
+            item.el.x = item.origX + dx;
+            item.el.y = item.origY + dy;
+            item.domEl.style.left = `${item.el.x}px`;
+            item.domEl.style.top = `${item.el.y}px`;
+            item.domEl.style.cursor = 'grabbing';
+        });
+    }
+
     function onMouseMove(moveEvent) {
         const dx = (moveEvent.clientX - startX) / scale;
         const dy = (moveEvent.clientY - startY) / scale;
@@ -92,8 +118,12 @@ export function startDragOrResize(domEl, el, e, callbacks) {
         const freeform = moveEvent.altKey;
 
         if (!isResizing && hasDragged) {
-            applyGeometry(orig.x + dx, orig.y + dy, orig.w, orig.h, !freeform);
-            domEl.style.cursor = 'grabbing';
+            if (activeGroup) {
+                applyGroupMove(dx, dy, !freeform);
+            } else {
+                applyGeometry(orig.x + dx, orig.y + dy, orig.w, orig.h, !freeform);
+                domEl.style.cursor = 'grabbing';
+            }
             callbacks.onGeometryChanged();
         } else if (isResizing) {
             let newW = orig.w, newH = orig.h, newX = orig.x, newY = orig.y;
@@ -118,6 +148,11 @@ export function startDragOrResize(domEl, el, e, callbacks) {
         window.removeEventListener('mousemove', onMouseMove);
         window.removeEventListener('mouseup', onMouseUp);
         domEl.style.cursor = '';
+        if (activeGroup) {
+            activeGroup.forEach(item => {
+                item.domEl.style.cursor = '';
+            });
+        }
         callbacks.onFinish(hasDragged, isResizing);
     }
 

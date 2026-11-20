@@ -16,14 +16,16 @@ export const DEFAULT_TEX_MACROS = `\\usepackage{amssymb}
 export const state = {
     slides: [],
     currentSlideIndex: 0,
+    selectedSlideIndices: [0],
     selectedElementIndex: null,
+    selectedElementIndices: [],
     slideWidth: 1920,
     slideHeight: 1080,
     gridSize: 20,
     isDarkMode: false,
 
-    elementClipboard: null,
-    slideClipboard: null,
+    elementClipboard: null, // Array of cloned element objects
+    slideClipboard: null,   // Array of cloned slide objects
 
     rawTexMacros: DEFAULT_TEX_MACROS,
     projectMacros: {},
@@ -46,10 +48,60 @@ export function currentSlide() {
     return state.slides[state.currentSlideIndex] || null;
 }
 
+export function getSelectedElementIndices() {
+    const slide = currentSlide();
+    if (!slide) return [];
+    const valid = (state.selectedElementIndices || [])
+        .filter(idx => Number.isInteger(idx) && idx >= 0 && idx < slide.elements.length);
+    if (valid.length > 0) return [...new Set(valid)].sort((a, b) => a - b);
+    if (state.selectedElementIndex !== null && slide.elements[state.selectedElementIndex]) {
+        return [state.selectedElementIndex];
+    }
+    return [];
+}
+
+export function setSelectedElementIndices(indices, primaryIndex = null) {
+    const slide = currentSlide();
+    const maxLen = slide ? slide.elements.length : 0;
+    const cleaned = [...new Set(
+        (indices || []).filter(idx => Number.isInteger(idx) && idx >= 0 && idx < maxLen)
+    )].sort((a, b) => a - b);
+
+    state.selectedElementIndices = cleaned;
+    if (cleaned.length === 0) {
+        state.selectedElementIndex = null;
+    } else if (primaryIndex !== null && cleaned.includes(primaryIndex)) {
+        state.selectedElementIndex = primaryIndex;
+    } else {
+        state.selectedElementIndex = cleaned[cleaned.length - 1];
+    }
+}
+
+export function getSelectedSlideIndices() {
+    const valid = (state.selectedSlideIndices || [])
+        .filter(idx => Number.isInteger(idx) && idx >= 0 && idx < state.slides.length);
+    if (valid.length > 0) return [...new Set(valid)].sort((a, b) => a - b);
+    if (state.slides[state.currentSlideIndex]) return [state.currentSlideIndex];
+    return [];
+}
+
+export function setSelectedSlideIndices(indices) {
+    const cleaned = [...new Set(
+        (indices || []).filter(idx => Number.isInteger(idx) && idx >= 0 && idx < state.slides.length)
+    )].sort((a, b) => a - b);
+    state.selectedSlideIndices = cleaned.length > 0
+        ? cleaned
+        : (state.slides.length > 0 ? [Math.max(0, Math.min(state.currentSlideIndex, state.slides.length - 1))] : []);
+}
+
 export function selectedElement() {
     const slide = currentSlide();
-    if (state.selectedElementIndex === null || !slide) return null;
-    return slide.elements[state.selectedElementIndex] || null;
+    const indices = getSelectedElementIndices();
+    if (!slide || indices.length === 0) return null;
+    const idx = (state.selectedElementIndex !== null && indices.includes(state.selectedElementIndex))
+        ? state.selectedElementIndex
+        : indices[indices.length - 1];
+    return slide.elements[idx] || null;
 }
 
 // ---------- LaTeX macros ----------
@@ -122,7 +174,9 @@ export function deserializeProject(content) {
     state.isDarkMode = !!data.isDarkMode;
     state.projectName = data.name || 'Untitled Project';
     state.currentSlideIndex = 0;
+    state.selectedSlideIndices = state.slides.length > 0 ? [0] : [];
     state.selectedElementIndex = null;
+    state.selectedElementIndices = [];
 }
 
 export function flashSaveIndicator(text) {
