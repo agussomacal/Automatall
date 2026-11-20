@@ -1,6 +1,6 @@
 // ============================================================
 // core/clipboard.js — Keyboard shortcuts for multi-selection,
-// arrow movement, cut/copy/paste, and deletion.
+// arrow movement, cut/copy/paste, deletion, and undo/redo.
 // ============================================================
 
 import {
@@ -11,6 +11,8 @@ import {
     setSelectedElementIndices,
     getSelectedSlideIndices,
     setSelectedSlideIndices,
+    undo,
+    redo,
 } from './state.js';
 import {
     renderEditor,
@@ -19,6 +21,11 @@ import {
     extendSlideSelectionByArrow,
     moveSelectedElementsByArrow,
 } from '../editor/editor.js';
+import {
+    syncSlideSizeSelect,
+    syncGridSizeSelect,
+    updateDimensionsCSS,
+} from './render.js';
 
 const PASTE_OFFSET_PX = 40;
 
@@ -28,6 +35,18 @@ function isTypingTarget(activeEl) {
         || activeEl.tagName === 'INPUT'
         || activeEl.tagName === 'TEXTAREA'
     );
+}
+
+function syncUiAfterHistoryChange() {
+    document.body.classList.toggle('dark-mode', state.isDarkMode);
+    const themeBtn = document.getElementById('theme-toggle-btn');
+    if (themeBtn) {
+        themeBtn.innerHTML = state.isDarkMode ? '<span>☀️</span> Day Mode' : '<span>🌙</span> Night Mode';
+    }
+    syncSlideSizeSelect();
+    syncGridSizeSelect();
+    updateDimensionsCSS();
+    renderEditor();
 }
 
 function copySelectionToClipboard() {
@@ -71,7 +90,25 @@ export function initKeyboardShortcuts() {
         const slide = state.slides[state.currentSlideIndex];
         const hasCtrlOrCmd = e.ctrlKey || e.metaKey;
 
-        // 0a. Shift + ArrowUp / ArrowDown — extend multi-selection across slides
+        // 0a. Ctrl/Cmd + Shift + Z (or Ctrl/Cmd + Y) — Redo
+        if (hasCtrlOrCmd && !e.altKey && ((e.shiftKey && e.key.toLowerCase() === 'z') || (!e.shiftKey && e.key.toLowerCase() === 'y'))) {
+            if (redo()) {
+                syncUiAfterHistoryChange();
+                e.preventDefault();
+            }
+            return;
+        }
+
+        // 0b. Ctrl/Cmd + Z (without Shift) — Undo
+        if (hasCtrlOrCmd && !e.shiftKey && !e.altKey && e.key.toLowerCase() === 'z') {
+            if (undo()) {
+                syncUiAfterHistoryChange();
+                e.preventDefault();
+            }
+            return;
+        }
+
+        // 0c. Shift + ArrowUp / ArrowDown — extend multi-selection across slides
         if (e.shiftKey && !hasCtrlOrCmd && !e.altKey && (e.key === 'ArrowUp' || e.key === 'ArrowDown')) {
             const delta = e.key === 'ArrowUp' ? -1 : 1;
             if (extendSlideSelectionByArrow(delta)) {
@@ -80,7 +117,7 @@ export function initKeyboardShortcuts() {
             return;
         }
 
-        // 0b. Plain Arrow keys — move selected object(s) together
+        // 0d. Plain Arrow keys — move selected object(s) together
         if (!hasCtrlOrCmd && !e.shiftKey && ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(e.key)) {
             if (getSelectedElementIndices().length > 0) {
                 if (moveSelectedElementsByArrow(e.key, e.altKey)) {

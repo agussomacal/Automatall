@@ -5,7 +5,7 @@
 import {
     state, pyApi, parseTexMacros, resetMacros, markDirty,
     startAutosave, flushPendingSave, renameProject, flashSaveIndicator,
-    serializeProject, deserializeProject, currentSnapshot,
+    serializeProject, deserializeProject, currentSnapshot, resetHistory,
     setSelectedElementIndices, setSelectedSlideIndices,
     DEFAULT_TEX_MACROS,
 } from './core/state.js';
@@ -126,6 +126,7 @@ function startProject(name, path, folder) {
 
     state.lastSnapshot = currentSnapshot();
     state.isDirty = false;
+    resetHistory();
 
     showView('editor-view');
     renderEditor();
@@ -182,6 +183,7 @@ async function openProjectByPath(path, content) {
         addRecent(state.projectName, path);
         state.lastSnapshot = currentSnapshot();
         state.isDirty = false;
+        resetHistory();
         showView('editor-view');
         renderEditor();
     } catch (e) {
@@ -228,6 +230,9 @@ function openSampleProject() {
     state.currentSlideIndex = 0;
     setSelectedSlideIndices([0]);
     setSelectedElementIndices([], null);
+    state.lastSnapshot = currentSnapshot();
+    state.isDirty = false;
+    resetHistory();
     const titleInput = document.getElementById('project-title-input');
     if (titleInput) titleInput.value = state.projectName;
     showView('editor-view');

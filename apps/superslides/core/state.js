@@ -1,10 +1,11 @@
 // ============================================================
-// core/state.js — Application state + persistence + macros.
-// No DOM manipulation here except the save indicator.
+// core/state.js — Application state + persistence + macros +
+// undo/redo history. No DOM manipulation here except the save indicator.
 // ============================================================
 
 export const AUTOSAVE_INTERVAL_MS = 5000;
 export const PROJECT_SCHEMA_VERSION = 1;
+export const MAX_HISTORY_ENTRIES = 100;
 
 export const DEFAULT_TEX_MACROS = `\\usepackage{amssymb}
 \\usepackage{amsfonts}
@@ -26,6 +27,11 @@ export const state = {
 
     elementClipboard: null, // Array of cloned element objects
     slideClipboard: null,   // Array of cloned slide objects
+
+    undoStack: [],
+    redoStack: [],
+    _isApplyingHistory: false,
+    _historyAnchorSnapshot: '',
 
     rawTexMacros: DEFAULT_TEX_MACROS,
     projectMacros: {},
@@ -104,6 +110,132 @@ export function selectedElement() {
     return slide.elements[idx] || null;
 }
 
+// ---------- Undo / Redo history ----------
+
+function buildHistoryEntry() {
+    return {
+        snapshot: currentSnapshot(),
+        currentSlideIndex: state.currentSlideIndex,
+        selectedSlideIndices: [...getSelectedSlideIndices()],
+        selectedElementIndex: state.selectedElementIndex,
+        selectedElementIndices: [...getSelectedElementIndices()],
+    };
+}
+
+export function resetHistory() {
+    state.undoStack = [];
+    state.redoStack = [];
+    state._isApplyingHistory = false;
+    state._historyAnchorSnapshot = currentSnapshot();
+}
+
+export function recordUndoCheckpoint() {
+    if (state._isApplyingHistory) return;
+    const currentSnap = currentSnapshot();
+    if (!state._historyAnchorSnapshot) {
+        state._historyAnchorSnapshot = currentSnap;
+    }
+    if (currentSnap === state._historyAnchorSnapshot) return;
+
+    const prevEntry = {
+        snapshot: state._historyAnchorSnapshot,
+        currentSlideIndex: state.currentSlideIndex,
+        selectedSlideIndices: [...getSelectedSlideIndices()],
+        selectedElementIndex: state.selectedElementIndex,
+        selectedElementIndices: [...getSelectedElementIndices()],
+    };
+
+    state.undoStack.push(prevEntry);
+    if (state.undoStack.length > MAX_HISTORY_ENTRIES) {
+        state.undoStack.shift();
+    }
+    state.redoStack = [];
+    state._historyAnchorSnapshot = currentSnap;
+}
+
+function applyHistoryEntry(entry) {
+    if (!entry) return false;
+    state._isApplyingHistory = true;
+    try {
+        const parsed = JSON.parse(entry.snapshot);
+        state.slides = parsed.slides || [];
+        state.slideWidth = parsed.slideWidth || 1920;
+        state.slideHeight = parsed.slideHeight || 1080;
+        state.gridSize = parsed.gridSize !== undefined ? parsed.gridSize : 20;
+        state.isDarkMode = !!parsed.isDarkMode;
+        if (typeof parsed.rawTexMacros === 'string') {
+            state.rawTexMacros = parsed.rawTexMacros;
+            state.projectMacros = parseTexMacros(state.rawTexMacros);
+        }
+
+        if (state.slides.length === 0) {
+            state.currentSlideIndex = 0;
+            state.selectedSlideIndices = [];
+            state.selectedElementIndex = null;
+            state.selectedElementIndices = [];
+        } else {
+            const clampedSlideIdx = Math.max(0, Math.min(entry.currentSlideIndex ?? 0, state.slides.length - 1));
+            state.currentSlideIndex = clampedSlideIdx;
+
+            const validSlides = (entry.selectedSlideIndices || [])
+                .filter(i => Number.isInteger(i) && i >= 0 && i < state.slides.length);
+            state.selectedSlideIndices = validSlides.length > 0 ? [...new Set(validSlides)].sort((a, b) => a - b) : [clampedSlideIdx];
+
+            const slide = state.slides[clampedSlideIdx];
+            const elCount = slide && Array.isArray(slide.elements) ? slide.elements.length : 0;
+            const validEls = (entry.selectedElementIndices || [])
+                .filter(i => Number.isInteger(i) && i >= 0 && i < elCount);
+            state.selectedElementIndices = [...new Set(validEls)].sort((a, b) => a - b);
+
+            if (Number.isInteger(entry.selectedElementIndex) && state.selectedElementIndices.includes(entry.selectedElementIndex)) {
+                state.selectedElementIndex = entry.selectedElementIndex;
+            } else {
+                state.selectedElementIndex = state.selectedElementIndices.length > 0
+                    ? state.selectedElementIndices[state.selectedElementIndices.length - 1]
+                    : null;
+            }
+        }
+
+        state._historyAnchorSnapshot = entry.snapshot;
+        state.isDirty = currentSnapshot() !== state.lastSnapshot;
+        return true;
+    } finally {
+        state._isApplyingHistory = false;
+    }
+}
+
+export function canUndo() {
+    return state.undoStack.length > 0;
+}
+
+export function canRedo() {
+    return state.redoStack.length > 0;
+}
+
+export function undo() {
+    if (!canUndo()) return false;
+    const currentEntry = buildHistoryEntry();
+    const targetEntry = state.undoStack.pop();
+    state.redoStack.push(currentEntry);
+    const applied = applyHistoryEntry(targetEntry);
+    if (applied) {
+        flashSaveIndicator('Undo ✓');
+    }
+    return applied;
+}
+
+export function redo() {
+    if (!canRedo()) return false;
+    const currentEntry = buildHistoryEntry();
+    const targetEntry = state.redoStack.pop();
+    state.undoStack.push(currentEntry);
+    const applied = applyHistoryEntry(targetEntry);
+    if (applied) {
+        flashSaveIndicator('Redo ✓');
+    }
+    return applied;
+}
+
 // ---------- LaTeX macros ----------
 
 export function parseTexMacros(texText) {
@@ -135,6 +267,7 @@ export function resetMacros() {
 
 export function markDirty() {
     state.isDirty = true;
+    recordUndoCheckpoint();
 }
 
 export function currentSnapshot() {
